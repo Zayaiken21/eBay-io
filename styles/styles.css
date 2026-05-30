@@ -123,6 +123,13 @@ body,
   box-shadow: 0 7px 18px rgba(15, 23, 42, 0.08) !important;
 }
 
+.st-key-top_menu_area div[data-testid="stButton"] button p {
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: clip !important;
+  max-width: 100% !important;
+}
+
 .st-key-top_menu_area button[kind="primary"],
 .st-key-top_menu_area [data-testid="stBaseButton-primary"],
 .st-key-top_menu_area div[data-testid="stButton"] button[kind="primary"] {
@@ -229,12 +236,22 @@ select {
   .st-key-top_menu_area div[data-testid="stButton"] button {
     height: 26px !important;
     min-height: 26px !important;
-    font-size: 4.7px !important;
+    font-size: 3.85px !important;
     font-weight: 950 !important;
-    letter-spacing: -0.72px !important;
+    letter-spacing: -0.92px !important;
     padding: 0 !important;
     line-height: 1 !important;
     border-radius: 999px !important;
+    text-align: center !important;
+  }
+
+  .st-key-top_menu_area div[data-testid="stButton"] button p {
+    font-size: 3.85px !important;
+    letter-spacing: -0.92px !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    max-width: 100% !important;
   }
 
   .app-hero {
@@ -277,8 +294,13 @@ select {
   .st-key-top_menu_area div[data-testid="stButton"] button {
     height: 25px !important;
     min-height: 25px !important;
-    font-size: 4.35px !important;
-    letter-spacing: -0.78px !important;
+    font-size: 3.55px !important;
+    letter-spacing: -0.98px !important;
+  }
+
+  .st-key-top_menu_area div[data-testid="stButton"] button p {
+    font-size: 3.55px !important;
+    letter-spacing: -0.98px !important;
   }
 
   .top-nav-brand {
@@ -292,8 +314,9 @@ select {
 
 /* Very small phones */
 @media screen and (max-width: 390px) {
-  .st-key-top_menu_area div[data-testid="stButton"] button {
-    font-size: 4.1px !important;
-    letter-spacing: -0.82px !important;
+  .st-key-top_menu_area div[data-testid="stButton"] button,
+  .st-key-top_menu_area div[data-testid="stButton"] button p {
+    font-size: 3.25px !important;
+    letter-spacing: -1px !important;
   }
 }
