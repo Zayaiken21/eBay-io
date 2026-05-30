@@ -25,6 +25,17 @@ st.set_page_config(
 load_css()
 init_session()
 
+# Handle eBay OAuth callback immediately after eBay redirects back.
+# This keeps your existing page structure intact.
+try:
+    from pages_ui.settings_page import process_ebay_oauth_callback_if_present
+    process_ebay_oauth_callback_if_present()
+except Exception as oauth_callback_error:
+    # Show the error only when this request looks like an OAuth callback.
+    if "code" in st.query_params or "state" in st.query_params:
+        st.error(f"eBay OAuth callback error: {oauth_callback_error}")
+
+
 PAGES = {
     "Dashboard": render_dashboard,
     "Products": render_products,
