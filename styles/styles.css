@@ -13,19 +13,23 @@
   --muted: #475569;
 }
 
+/* Hide Streamlit chrome / watermarks */
 #MainMenu,
 footer,
-header {
-  visibility: hidden;
-}
-
+header,
+[data-testid="stHeader"],
 [data-testid="stToolbar"],
 [data-testid="stDecoration"],
 [data-testid="stStatusWidget"],
+[data-testid="stDeployButton"],
+[data-testid="collapsedControl"],
 .stDeployButton {
-  display: none;
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
 }
 
+/* App background */
 .stApp {
   background:
     radial-gradient(circle at 8% 0%, rgba(36, 87, 255, 0.30), transparent 32%),
@@ -40,6 +44,7 @@ header {
   max-width: 1240px;
 }
 
+/* Sticky top navigation */
 .top-nav {
   position: sticky;
   top: 0;
@@ -50,19 +55,66 @@ header {
   background: rgba(255, 255, 255, 0.82);
   border: 1px solid var(--border);
   backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   box-shadow: 0 16px 42px rgba(15, 23, 42, 0.13);
 }
 
 .top-nav-brand {
+  display: block;
+  margin-bottom: 14px;
   font-size: 24px;
   font-weight: 900;
+  line-height: 1;
   letter-spacing: -0.7px;
   background: linear-gradient(135deg, var(--royal-blue), var(--lime-green));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
-div[data-testid="stButton"] > button {
+/* Real HTML nav row: stays horizontal on laptop and phone */
+.nav-button-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+}
+
+.nav-pill {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--text) !important;
+  text-decoration: none !important;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all 0.2s ease;
+}
+
+.nav-pill:hover {
+  border-color: var(--royal-blue);
+  background: rgba(36, 87, 255, 0.09);
+}
+
+.nav-pill-active {
+  background: linear-gradient(135deg, var(--royal-blue), var(--lime-green)) !important;
+  color: white !important;
+  border: none !important;
+}
+
+/* Keep any normal Streamlit buttons styled for forms/settings */
+div[data-testid="stButton"] > button,
+div[data-testid="stFormSubmitButton"] > button {
   border-radius: 999px;
   min-height: 38px;
   font-size: 13px;
@@ -73,7 +125,8 @@ div[data-testid="stButton"] > button {
   transition: all 0.2s ease;
 }
 
-div[data-testid="stButton"] > button:hover {
+div[data-testid="stButton"] > button:hover,
+div[data-testid="stFormSubmitButton"] > button:hover {
   border-color: var(--royal-blue);
   background: rgba(36, 87, 255, 0.09);
 }
@@ -84,6 +137,7 @@ button[kind="primary"] {
   border: none !important;
 }
 
+/* Hero cards */
 .app-hero {
   padding: 32px;
   border-radius: 26px;
@@ -107,6 +161,7 @@ button[kind="primary"] {
   font-size: 16px;
 }
 
+/* Dashboard cards */
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -133,35 +188,99 @@ button[kind="primary"] {
   font-size: 26px;
 }
 
+/* Inputs */
 input,
 textarea,
 select {
   border-radius: 12px !important;
 }
 
+/* Tablet */
 @media screen and (max-width: 900px) {
   .dashboard-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .top-nav-brand {
-    text-align: center;
-    font-size: 18px;
+  .top-nav {
+    padding: 11px;
+    border-radius: 20px;
   }
 
-  div[data-testid="stButton"] > button {
-    min-height: 34px;
-    font-size: 10.5px;
-    padding: 4px;
+  .top-nav-brand {
+    margin-bottom: 10px;
+    font-size: 19px;
+  }
+
+  .nav-button-row {
+    gap: 5px;
+  }
+
+  .nav-pill {
+    height: 32px;
+    font-size: 10px;
+    padding: 0 4px;
   }
 }
 
+/* Phone: same laptop layout, only smaller */
 @media screen and (max-width: 560px) {
+  .block-container {
+    padding-top: 0.65rem;
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+  }
+
+  .top-nav {
+    padding: 9px;
+    margin-bottom: 12px;
+    border-radius: 18px;
+  }
+
+  .top-nav-brand {
+    margin-bottom: 8px;
+    font-size: 16px;
+    text-align: left;
+  }
+
+  .nav-button-row {
+    gap: 3px;
+  }
+
+  .nav-pill {
+    height: 27px;
+    font-size: 6.9px;
+    font-weight: 800;
+    padding: 0 2px;
+    letter-spacing: -0.2px;
+  }
+
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
 
+  .app-hero {
+    padding: 22px;
+    border-radius: 22px;
+  }
+
   .app-hero h1 {
     font-size: 30px;
+  }
+
+  .app-hero p {
+    font-size: 14px;
+  }
+}
+
+/* Extra small phones */
+@media screen and (max-width: 390px) {
+  .nav-pill {
+    height: 25px;
+    font-size: 6.1px;
+    padding: 0 1px;
+  }
+
+  .top-nav-brand {
+    font-size: 15px;
   }
 }
