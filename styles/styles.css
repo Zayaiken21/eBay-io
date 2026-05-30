@@ -13,7 +13,7 @@
   --muted: #475569;
 }
 
-/* Hide Streamlit chrome / watermarks */
+/* STREAMLIT WATERMARK / CHROME CLEANUP */
 #MainMenu,
 footer,
 header,
@@ -29,7 +29,13 @@ header,
   height: 0 !important;
 }
 
-/* App background */
+.block-container {
+  padding-top: 1rem;
+  padding-bottom: 2rem;
+  max-width: 1240px;
+}
+
+/* BACKGROUND */
 .stApp {
   background:
     radial-gradient(circle at 8% 0%, rgba(36, 87, 255, 0.30), transparent 32%),
@@ -38,106 +44,73 @@ header,
   color: var(--text);
 }
 
-.block-container {
-  padding-top: 1rem;
-  padding-bottom: 2rem;
-  max-width: 1240px;
-}
-
-/* Sticky top navigation */
+/* TOP NAV BRAND BAR */
 .top-nav {
   position: sticky;
   top: 0;
   z-index: 9999;
-  padding: 14px;
-  margin-bottom: 18px;
+  padding: 14px 18px;
+  margin-bottom: 12px;
   border-radius: 22px;
-  background: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.84);
   border: 1px solid var(--border);
   backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   box-shadow: 0 16px 42px rgba(15, 23, 42, 0.13);
 }
 
 .top-nav-brand {
-  display: block;
-  margin-bottom: 14px;
   font-size: 24px;
   font-weight: 900;
-  line-height: 1;
   letter-spacing: -0.7px;
   background: linear-gradient(135deg, var(--royal-blue), var(--lime-green));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
-/* Real HTML nav row: stays horizontal on laptop and phone */
-.nav-button-row {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 14px;
-  width: 100%;
+/* FORCE MENU ROW TO STAY LIKE DESKTOP */
+.st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  gap: 10px !important;
+  align-items: center !important;
 }
 
-.nav-pill {
-  flex: 1 1 0;
-  min-width: 0;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.86);
+.st-key-top_menu_area div[data-testid="column"] {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  width: auto !important;
+}
+
+/* BUTTONS */
+.st-key-top_menu_area div[data-testid="stButton"] > button {
+  width: 100% !important;
+  border-radius: 999px !important;
+  min-height: 38px !important;
+  height: 38px !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  border: 1px solid var(--border) !important;
+  background: rgba(255, 255, 255, 0.88) !important;
   color: var(--text) !important;
-  text-decoration: none !important;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: all 0.2s ease;
+  transition: all 0.2s ease !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
 }
 
-.nav-pill:hover {
-  border-color: var(--royal-blue);
-  background: rgba(36, 87, 255, 0.09);
+.st-key-top_menu_area div[data-testid="stButton"] > button:hover {
+  border-color: var(--royal-blue) !important;
+  background: rgba(36, 87, 255, 0.09) !important;
 }
 
-.nav-pill-active {
+.st-key-top_menu_area button[kind="primary"] {
   background: linear-gradient(135deg, var(--royal-blue), var(--lime-green)) !important;
   color: white !important;
   border: none !important;
 }
 
-/* Keep any normal Streamlit buttons styled for forms/settings */
-div[data-testid="stButton"] > button,
-div[data-testid="stFormSubmitButton"] > button {
-  border-radius: 999px;
-  min-height: 38px;
-  font-size: 13px;
-  font-weight: 700;
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.86);
-  color: var(--text);
-  transition: all 0.2s ease;
-}
-
-div[data-testid="stButton"] > button:hover,
-div[data-testid="stFormSubmitButton"] > button:hover {
-  border-color: var(--royal-blue);
-  background: rgba(36, 87, 255, 0.09);
-}
-
-button[kind="primary"] {
-  background: linear-gradient(135deg, var(--royal-blue), var(--lime-green)) !important;
-  color: white !important;
-  border: none !important;
-}
-
-/* Hero cards */
+/* HERO */
 .app-hero {
   padding: 32px;
   border-radius: 26px;
@@ -161,7 +134,7 @@ button[kind="primary"] {
   font-size: 16px;
 }
 
-/* Dashboard cards */
+/* DASHBOARD */
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -188,99 +161,99 @@ button[kind="primary"] {
   font-size: 26px;
 }
 
-/* Inputs */
 input,
 textarea,
 select {
   border-radius: 12px !important;
 }
 
-/* Tablet */
+/* TABLET */
 @media screen and (max-width: 900px) {
   .dashboard-grid {
     grid-template-columns: repeat(2, 1fr);
   }
-
-  .top-nav {
-    padding: 11px;
-    border-radius: 20px;
-  }
-
-  .top-nav-brand {
-    margin-bottom: 10px;
-    font-size: 19px;
-  }
-
-  .nav-button-row {
-    gap: 5px;
-  }
-
-  .nav-pill {
-    height: 32px;
-    font-size: 10px;
-    padding: 0 4px;
-  }
 }
 
-/* Phone: same laptop layout, only smaller */
-@media screen and (max-width: 560px) {
+/* MOBILE FIX: SAME DESKTOP MENU, SHRUNK DOWN */
+@media screen and (max-width: 700px) {
   .block-container {
-    padding-top: 0.65rem;
-    padding-left: 0.45rem;
-    padding-right: 0.45rem;
+    padding-left: 0.45rem !important;
+    padding-right: 0.45rem !important;
+    padding-top: 0.55rem !important;
   }
 
   .top-nav {
-    padding: 9px;
-    margin-bottom: 12px;
-    border-radius: 18px;
+    padding: 9px 12px !important;
+    margin-bottom: 8px !important;
+    border-radius: 18px !important;
   }
 
   .top-nav-brand {
-    margin-bottom: 8px;
-    font-size: 16px;
-    text-align: left;
+    font-size: 17px !important;
+    text-align: left !important;
   }
 
-  .nav-button-row {
-    gap: 3px;
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 3px !important;
   }
 
-  .nav-pill {
-    height: 27px;
-    font-size: 6.9px;
-    font-weight: 800;
-    padding: 0 2px;
-    letter-spacing: -0.2px;
+  .st-key-top_menu_area div[data-testid="column"] {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    width: 12.5% !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
   }
 
-  .dashboard-grid {
-    grid-template-columns: 1fr;
+  .st-key-top_menu_area div[data-testid="stButton"] > button {
+    min-height: 26px !important;
+    height: 26px !important;
+    font-size: 6.6px !important;
+    padding: 0 1px !important;
+    border-radius: 999px !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: clip !important;
   }
 
   .app-hero {
-    padding: 22px;
-    border-radius: 22px;
+    padding: 22px !important;
+    border-radius: 22px !important;
   }
 
   .app-hero h1 {
-    font-size: 30px;
+    font-size: 28px !important;
   }
 
   .app-hero p {
-    font-size: 14px;
+    font-size: 14px !important;
   }
 }
 
-/* Extra small phones */
-@media screen and (max-width: 390px) {
-  .nav-pill {
-    height: 25px;
-    font-size: 6.1px;
-    padding: 0 1px;
+/* SMALL PHONES */
+@media screen and (max-width: 430px) {
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
+    gap: 2px !important;
+  }
+
+  .st-key-top_menu_area div[data-testid="stButton"] > button {
+    height: 24px !important;
+    min-height: 24px !important;
+    font-size: 5.8px !important;
+    padding: 0 !important;
   }
 
   .top-nav-brand {
-    font-size: 15px;
+    font-size: 16px !important;
+  }
+}
+
+/* VERY SMALL PHONES */
+@media screen and (max-width: 375px) {
+  .st-key-top_menu_area div[data-testid="stButton"] > button {
+    font-size: 5.2px !important;
   }
 }
