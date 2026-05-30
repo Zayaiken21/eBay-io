@@ -1,0 +1,167 @@
+:root {
+  --royal-blue: #2457ff;
+  --deep-blue: #102a8c;
+  --lime-green: #a3ff12;
+  --soft-lime: #d9ff8f;
+
+  --bg-main: #dfe7f3;
+  --bg-deep: #b9c8dc;
+  --bg-card: rgba(255, 255, 255, 0.84);
+
+  --border: rgba(15, 23, 42, 0.12);
+  --text: #0f172a;
+  --muted: #475569;
+}
+
+#MainMenu,
+footer,
+header {
+  visibility: hidden;
+}
+
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+.stDeployButton {
+  display: none;
+}
+
+.stApp {
+  background:
+    radial-gradient(circle at 8% 0%, rgba(36, 87, 255, 0.30), transparent 32%),
+    radial-gradient(circle at 92% 0%, rgba(163, 255, 18, 0.28), transparent 34%),
+    linear-gradient(180deg, #eef3fa 0%, var(--bg-main) 45%, var(--bg-deep) 100%);
+  color: var(--text);
+}
+
+.block-container {
+  padding-top: 1rem;
+  padding-bottom: 2rem;
+  max-width: 1240px;
+}
+
+.top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+  padding: 14px;
+  margin-bottom: 18px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.13);
+}
+
+.top-nav-brand {
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: -0.7px;
+  background: linear-gradient(135deg, var(--royal-blue), var(--lime-green));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+div[data-testid="stButton"] > button {
+  border-radius: 999px;
+  min-height: 38px;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--text);
+  transition: all 0.2s ease;
+}
+
+div[data-testid="stButton"] > button:hover {
+  border-color: var(--royal-blue);
+  background: rgba(36, 87, 255, 0.09);
+}
+
+button[kind="primary"] {
+  background: linear-gradient(135deg, var(--royal-blue), var(--lime-green)) !important;
+  color: white !important;
+  border: none !important;
+}
+
+.app-hero {
+  padding: 32px;
+  border-radius: 26px;
+  background:
+    linear-gradient(135deg, rgba(36, 87, 255, 0.16), rgba(163, 255, 18, 0.22)),
+    rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--border);
+  margin-bottom: 24px;
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.08);
+}
+
+.app-hero h1 {
+  margin: 0;
+  font-size: 42px;
+  font-weight: 900;
+  letter-spacing: -1.1px;
+}
+
+.app-hero p {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.metric-card {
+  padding: 18px;
+  border-radius: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+}
+
+.metric-card h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.metric-card strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 26px;
+}
+
+input,
+textarea,
+select {
+  border-radius: 12px !important;
+}
+
+@media screen and (max-width: 900px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .top-nav-brand {
+    text-align: center;
+    font-size: 18px;
+  }
+
+  div[data-testid="stButton"] > button {
+    min-height: 34px;
+    font-size: 10.5px;
+    padding: 4px;
+  }
+}
+
+@media screen and (max-width: 560px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .app-hero h1 {
+    font-size: 30px;
+  }
+}
