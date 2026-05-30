@@ -68,8 +68,10 @@ body,
   padding: 15px 18px;
   margin-bottom: 12px;
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid var(--border);
+  background:
+    linear-gradient(135deg, rgba(36, 87, 255, 0.20), rgba(146, 255, 24, 0.34), rgba(215, 255, 63, 0.26)),
+    rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.48);
   backdrop-filter: blur(18px);
   box-shadow: 0 16px 42px rgba(15, 23, 42, 0.13);
   display: flex;
@@ -83,12 +85,11 @@ body,
   font-weight: 950;
   letter-spacing: -0.8px;
   line-height: 1;
-  background: linear-gradient(135deg, var(--royal-blue), var(--lime-green), var(--yellow-green));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: #1237c5;
+  text-shadow: 0 1px 12px rgba(146, 255, 24, 0.45);
 }
 
-/* Nav row */
+/* Menu row */
 .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
   display: grid !important;
   grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
@@ -222,16 +223,16 @@ select {
 
   .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
     grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
-    gap: 2px !important;
+    gap: 1px !important;
   }
 
   .st-key-top_menu_area div[data-testid="stButton"] button {
-    height: 25px !important;
-    min-height: 25px !important;
-    font-size: 5.6px !important;
-    font-weight: 900 !important;
-    letter-spacing: -0.68px !important;
-    padding: 0 1px !important;
+    height: 26px !important;
+    min-height: 26px !important;
+    font-size: 4.7px !important;
+    font-weight: 950 !important;
+    letter-spacing: -0.72px !important;
+    padding: 0 !important;
     line-height: 1 !important;
     border-radius: 999px !important;
   }
@@ -273,15 +274,11 @@ select {
 
 /* Small iPhones */
 @media screen and (max-width: 430px) {
-  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
-    gap: 1px !important;
-  }
-
   .st-key-top_menu_area div[data-testid="stButton"] button {
-    height: 24px !important;
-    min-height: 24px !important;
-    font-size: 5.05px !important;
-    letter-spacing: -0.72px !important;
+    height: 25px !important;
+    min-height: 25px !important;
+    font-size: 4.35px !important;
+    letter-spacing: -0.78px !important;
   }
 
   .top-nav-brand {
@@ -296,7 +293,7 @@ select {
 /* Very small phones */
 @media screen and (max-width: 390px) {
   .st-key-top_menu_area div[data-testid="stButton"] button {
-    font-size: 4.75px !important;
-    letter-spacing: -0.75px !important;
+    font-size: 4.1px !important;
+    letter-spacing: -0.82px !important;
   }
 }
