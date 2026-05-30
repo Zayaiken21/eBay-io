@@ -12,7 +12,7 @@
   --muted: #475569;
 }
 
-/* Remove Streamlit chrome */
+/* Hide Streamlit chrome */
 #MainMenu,
 footer,
 header,
@@ -32,10 +32,13 @@ a[href*="streamlit.io"] {
   width: 0 !important;
 }
 
-/* Prevent horizontal page overflow */
+/* Stop horizontal overflow */
 html,
 body,
-.stApp {
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"] {
   max-width: 100vw !important;
   overflow-x: hidden !important;
 }
@@ -54,7 +57,7 @@ body,
   max-width: 1240px;
 }
 
-/* Brand bar */
+/* Top brand */
 .top-nav {
   position: sticky;
   top: 0;
@@ -77,23 +80,19 @@ body,
   -webkit-text-fill-color: transparent;
 }
 
-/* Menu row */
+/* Desktop menu */
 .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
-  display: flex !important;
-  flex-direction: row !important;
-  flex-wrap: nowrap !important;
+  display: grid !important;
+  grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
   gap: 10px !important;
   width: 100% !important;
   max-width: 100% !important;
 }
 
-.st-key-top_menu_area div[data-testid="column"] {
+.st-key-top_menu_area div[data-testid="stHorizontalBlock"] > div {
   min-width: 0 !important;
-  width: auto !important;
-  flex: 1 1 0 !important;
-  max-width: none !important;
-  padding-left: 0 !important;
-  padding-right: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
 }
 
 .st-key-top_menu_area div[data-testid="stButton"] > button {
@@ -201,27 +200,73 @@ select {
   }
 
   .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
+    display: grid !important;
+    grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
     gap: 2px !important;
-    flex-wrap: nowrap !important;
+    width: 100% !important;
+    max-width: 100% !important;
     overflow: hidden !important;
   }
 
-  .st-key-top_menu_area div[data-testid="column"] {
-    flex: 0 0 12.5% !important;
-    width: 12.5% !important;
-    max-width: 12.5% !important;
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] > div {
     min-width: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
   }
 
   .st-key-top_menu_area div[data-testid="stButton"] > button {
-    height: 23px !important;
-    min-height: 23px !important;
-    font-size: 5.45px !important;
+    height: 24px !important;
+    min-height: 24px !important;
+    font-size: 0 !important;
     padding: 0 !important;
-    letter-spacing: -0.35px !important;
-    line-height: 1 !important;
     border-radius: 999px !important;
-    text-overflow: clip !important;
+    line-height: 1 !important;
+  }
+
+  .st-key-top_menu_area div[data-testid="stButton"] > button p {
+    display: none !important;
+  }
+
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] > div:nth-child(1) button::after {
+    content: "Dash";
+    font-size: 7.5px;
+  }
+
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] > div:nth-child(2) button::after {
+    content: "Prod";
+    font-size: 7.5px;
+  }
+
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] > div:nth-child(3) button::after {
+    content: "Stats";
+    font-size: 7.5px;
+  }
+
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] > div:nth-child(4) button::after {
+    content: "Set";
+    font-size: 7.5px;
+  }
+
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] > div:nth-child(5) button::after {
+    content: "Blog";
+    font-size: 7.5px;
+  }
+
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] > div:nth-child(6) button::after {
+    content: "Order";
+    font-size: 7.2px;
+  }
+
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] > div:nth-child(7) button::after {
+    content: "Cat";
+    font-size: 7.5px;
+  }
+
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] > div:nth-child(8) button::after {
+    content: "Out";
+    font-size: 7.5px;
   }
 
   .app-hero {
@@ -259,17 +304,19 @@ select {
   }
 }
 
-/* Small iPhones */
+/* Small phones */
 @media screen and (max-width: 430px) {
   .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
     gap: 1px !important;
   }
 
   .st-key-top_menu_area div[data-testid="stButton"] > button {
-    height: 21px !important;
-    min-height: 21px !important;
-    font-size: 4.85px !important;
-    letter-spacing: -0.45px !important;
+    height: 22px !important;
+    min-height: 22px !important;
+  }
+
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] > div button::after {
+    font-size: 6.8px !important;
   }
 
   .top-nav-brand {
@@ -278,12 +325,5 @@ select {
 
   .app-hero h1 {
     font-size: 24px !important;
-  }
-}
-
-/* Very small phones */
-@media screen and (max-width: 390px) {
-  .st-key-top_menu_area div[data-testid="stButton"] > button {
-    font-size: 4.45px !important;
   }
 }
