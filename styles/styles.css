@@ -10,6 +10,8 @@
   --border: rgba(15, 23, 42, 0.12);
   --text: #0f172a;
   --muted: #475569;
+
+  --font-main: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 /* Hide Streamlit chrome */
@@ -32,7 +34,7 @@ a[href*="streamlit.io"] {
   width: 0 !important;
 }
 
-/* Stop side overflow */
+/* Global */
 html,
 body,
 .stApp,
@@ -41,6 +43,7 @@ body,
 [data-testid="stMainBlockContainer"] {
   max-width: 100vw !important;
   overflow-x: hidden !important;
+  font-family: var(--font-main) !important;
 }
 
 .stApp {
@@ -62,25 +65,30 @@ body,
   position: sticky;
   top: 0;
   z-index: 9999;
-  padding: 14px 18px;
+  padding: 15px 18px;
   margin-bottom: 12px;
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.84);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.86);
   border: 1px solid var(--border);
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(18px);
   box-shadow: 0 16px 42px rgba(15, 23, 42, 0.13);
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .top-nav-brand {
-  font-size: 24px;
-  font-weight: 900;
-  letter-spacing: -0.7px;
+  text-align: center;
+  font-size: 26px;
+  font-weight: 950;
+  letter-spacing: -0.8px;
+  line-height: 1;
   background: linear-gradient(135deg, var(--royal-blue), var(--lime-green), var(--yellow-green));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
-/* Force nav to one clean row */
+/* Nav row */
 .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
   display: grid !important;
   grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
@@ -97,24 +105,23 @@ body,
   padding-right: 0 !important;
 }
 
-/* Normal buttons */
 .st-key-top_menu_area div[data-testid="stButton"] button {
   width: 100% !important;
   border-radius: 999px !important;
   min-height: 38px !important;
   height: 38px !important;
-  font-size: 13px !important;
-  font-weight: 800 !important;
+  font-size: 12.5px !important;
+  font-weight: 850 !important;
+  letter-spacing: -0.25px !important;
   border: 1px solid var(--border) !important;
-  background: rgba(255, 255, 255, 0.9) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
   color: var(--text) !important;
   white-space: nowrap !important;
   overflow: hidden !important;
-  text-overflow: ellipsis !important;
+  text-overflow: clip !important;
   box-shadow: 0 7px 18px rgba(15, 23, 42, 0.08) !important;
 }
 
-/* Active button gradient */
 .st-key-top_menu_area button[kind="primary"],
 .st-key-top_menu_area [data-testid="stBaseButton-primary"],
 .st-key-top_menu_area div[data-testid="stButton"] button[kind="primary"] {
@@ -139,8 +146,8 @@ body,
 .app-hero h1 {
   margin: 0;
   font-size: 42px;
-  font-weight: 900;
-  letter-spacing: -1.1px;
+  font-weight: 950;
+  letter-spacing: -1.15px;
 }
 
 .app-hero p {
@@ -167,12 +174,14 @@ body,
   margin: 0;
   color: var(--muted);
   font-size: 13px;
+  font-weight: 800;
 }
 
 .metric-card strong {
   display: block;
   margin-top: 8px;
   font-size: 26px;
+  font-weight: 900;
 }
 
 input,
@@ -198,13 +207,17 @@ select {
   }
 
   .top-nav {
-    padding: 10px 13px !important;
-    margin-bottom: 9px !important;
+    padding: 12px 13px !important;
+    margin-bottom: 10px !important;
     border-radius: 18px !important;
   }
 
   .top-nav-brand {
-    font-size: 16px !important;
+    width: 100%;
+    text-align: center !important;
+    font-size: 18px !important;
+    font-weight: 950 !important;
+    letter-spacing: -0.55px !important;
   }
 
   .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
@@ -213,11 +226,12 @@ select {
   }
 
   .st-key-top_menu_area div[data-testid="stButton"] button {
-    height: 24px !important;
-    min-height: 24px !important;
-    font-size: 5.8px !important;
-    letter-spacing: -0.55px !important;
-    padding: 0 !important;
+    height: 25px !important;
+    min-height: 25px !important;
+    font-size: 5.6px !important;
+    font-weight: 900 !important;
+    letter-spacing: -0.68px !important;
+    padding: 0 1px !important;
     line-height: 1 !important;
     border-radius: 999px !important;
   }
@@ -230,7 +244,7 @@ select {
 
   .app-hero h1 {
     font-size: 26px !important;
-    letter-spacing: -0.8px !important;
+    letter-spacing: -0.85px !important;
   }
 
   .app-hero p {
@@ -264,14 +278,14 @@ select {
   }
 
   .st-key-top_menu_area div[data-testid="stButton"] button {
-    height: 23px !important;
-    min-height: 23px !important;
-    font-size: 5.15px !important;
-    letter-spacing: -0.65px !important;
+    height: 24px !important;
+    min-height: 24px !important;
+    font-size: 5.05px !important;
+    letter-spacing: -0.72px !important;
   }
 
   .top-nav-brand {
-    font-size: 15px !important;
+    font-size: 17px !important;
   }
 
   .app-hero h1 {
@@ -282,6 +296,7 @@ select {
 /* Very small phones */
 @media screen and (max-width: 390px) {
   .st-key-top_menu_area div[data-testid="stButton"] button {
-    font-size: 4.85px !important;
+    font-size: 4.75px !important;
+    letter-spacing: -0.75px !important;
   }
 }
