@@ -1,272 +1,430 @@
+import json
+from datetime import datetime, timezone
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
 
-def _sample_orders() -> pd.DataFrame:
-    now = datetime.now()
-    return pd.DataFrame([
-        {
-            "order_id": "EB-1001",
-            "order_type": "fulfillment",
-            "status": "ready_to_buy",
-            "client": "Alpha",
-            "item": "Wireless Mouse",
-            "supplier": "Walmart",
-            "cost": 42.50,
-            "sell_price": 60.70,
-            "profit": 18.20,
-            "priority": "high",
-            "tracking": "",
-            "created_at": (now - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M"),
-        },
-        {
-            "order_id": "CP-1002",
-            "order_type": "client_purchase",
-            "status": "purchased",
-            "client": "Beta",
-            "item": "Laptop Stand",
-            "supplier": "Target",
-            "cost": 68.10,
-            "sell_price": 93.00,
-            "profit": 24.90,
-            "priority": "medium",
-            "tracking": "9400X",
-            "created_at": (now - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M"),
-        },
-        {
-            "order_id": "EB-1003",
-            "order_type": "fulfillment",
-            "status": "shipped",
-            "client": "Gamma",
-            "item": "USB Hub",
-            "supplier": "Amazon",
-            "cost": 31.00,
-            "sell_price": 43.75,
-            "profit": 12.75,
-            "priority": "low",
-            "tracking": "9401Y",
-            "created_at": (now - timedelta(hours=2, minutes=15)).strftime("%Y-%m-%d %H:%M"),
-        },
-        {
-            "order_id": "CP-1004",
-            "order_type": "client_purchase",
-            "status": "problem",
-            "client": "Delta",
-            "item": "Desk Mat",
-            "supplier": "Best Buy",
-            "cost": 55.40,
-            "sell_price": 52.20,
-            "profit": -3.20,
-            "priority": "high",
-            "tracking": "",
-            "created_at": (now - timedelta(hours=1, minutes=20)).strftime("%Y-%m-%d %H:%M"),
-        },
-        {
-            "order_id": "EB-1005",
-            "order_type": "fulfillment",
-            "status": "delivered",
-            "client": "Alpha",
-            "item": "Phone Holder",
-            "supplier": "Temu",
-            "cost": 29.99,
-            "sell_price": 44.09,
-            "profit": 14.10,
-            "priority": "medium",
-            "tracking": "9402Z",
-            "created_at": (now - timedelta(minutes=45)).strftime("%Y-%m-%d %H:%M"),
-        },
-    ])
+from core.ebay_account_store import call_ebay_api
 
-def _ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
-    defaults = {
+
+RATE_LIMIT_WARNING = 0.80
+RATE_LIMIT_BLOCK = 0.95
+DEFAULT_PAGE_SIZE = 50
+
+
+def _safe_get(d, keys, default=None):
+    cur = d
+    for k in keys:
+        if not isinstance(cur, dict) or k not in cur:
+            return default
+        cur = cur[k]
+    return cur
+
+
+def _to_float(value, default=0.0):
+    try:
+        if value is None:
+            return default
+        if isinstance(value, dict):
+            v = value.get("value")
+            return float(v) if v not in (None, "") else default
+        return float(value)
+    except Exception:
+        return default
+
+
+def _normalize_inventory_item(item: dict) -> dict:
+    product = item.get("product", {}) if isinstance(item, dict) else {}
+    availability = item.get("availability", {}) if isinstance(item, dict) else {}
+    ship_avail = availability.get("shipToLocationAvailability", {}) if isinstance(availability, dict) else {}
+
+    sku = item.get("sku", "")
+    title = product.get("title", "")
+    aspects = product.get("aspects", {}) if isinstance(product, dict) else {}
+    brand = ""
+    if isinstance(aspects, dict):
+        brand = ", ".join(aspects.get("Brand", [])[:1]) if aspects.get("Brand") else ""
+
+    return {
+        "record_type": "inventory_item",
         "order_id": "",
-        "order_type": "fulfillment",
-        "status": "new",
+        "status": "LIVE",
+        "payment_status": "",
+        "fulfillment_status": "",
+        "sku": sku,
+        "title": title,
         "client": "",
-        "item": "",
-        "supplier": "",
-        "cost": 0.0,
-        "sell_price": 0.0,
-        "profit": 0.0,
-        "priority": "medium",
+        "source": "eBay Inventory",
+        "quantity": ship_avail.get("quantity", ""),
+        "cost": "",
+        "price": "",
+        "profit": "",
         "tracking": "",
-        "created_at": "",
-        "channel": "",
+        "ship_by": "",
+        "updated_at": "",
+        "brand": brand,
+        "raw": item,
     }
-    for col, default in defaults.items():
-        if col not in df.columns:
-            df[col] = default
-    return df
+
+
+def _normalize_fulfillment_order(order: dict) -> list[dict]:
+    if not isinstance(order, dict):
+        return []
+
+    line_items = order.get("lineItems", []) or []
+    rows = []
+    for line in line_items:
+        delivery_cost = line.get("deliveryCost", {}) if isinstance(line, dict) else {}
+        line_cost = line.get("lineItemCost", {}) if isinstance(line, dict) else {}
+        line_total = line.get("total", {}) if isinstance(line, dict) else {}
+        fulfillment_instr = line.get("lineItemFulfillmentInstructions", {}) if isinstance(line, dict) else {}
+
+        rows.append(
+            {
+                "record_type": "order",
+                "order_id": order.get("orderId", ""),
+                "status": order.get("orderFulfillmentStatus", ""),
+                "payment_status": order.get("orderPaymentStatus", ""),
+                "fulfillment_status": line.get("lineItemFulfillmentStatus", ""),
+                "sku": line.get("sku", ""),
+                "title": line.get("title", ""),
+                "client": _safe_get(order, ["buyer", "username"], ""),
+                "source": "eBay Order",
+                "quantity": line.get("quantity", ""),
+                "cost": _to_float(line_cost),
+                "price": _to_float(line_total),
+                "profit": _to_float(line_total) - _to_float(line_cost),
+                "tracking": "",
+                "ship_by": fulfillment_instr.get("shipByDate", ""),
+                "updated_at": order.get("lastModifiedDate", ""),
+                "brand": "",
+                "raw": order,
+            }
+        )
+    return rows
+
+
+def _extract_rate_limits(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+
+    rate_limits = payload.get("rateLimits")
+    if isinstance(rate_limits, list) and rate_limits:
+        rl = rate_limits[0]
+        total = _to_float(rl.get("callLimit"), 0)
+        used = _to_float(rl.get("callsUsed"), 0)
+        remaining = _to_float(rl.get("remainingCalls"), max(total - used, 0))
+        reset = rl.get("timeWindow") or rl.get("resetInMinutes") or ""
+        pct = (used / total) if total else 0
+        return {
+            "total": total,
+            "used": used,
+            "remaining": remaining,
+            "pct": pct,
+            "reset": reset,
+        }
+    return {}
+
+
+def _format_pct(x: float) -> str:
+    return f"{x * 100:.1f}%"
+
+
+def _rate_status(pct: float) -> str:
+    if pct >= RATE_LIMIT_BLOCK:
+        return "BLOCKED"
+    if pct >= RATE_LIMIT_WARNING:
+        return "WARN"
+    return "OK"
+
+
+def _hero_css() -> str:
+    return """
+    <style>
+    .orders-shell { padding-top: 0.35rem; }
+    .orders-hero {
+        background: linear-gradient(135deg, rgba(15,23,42,0.96), rgba(30,41,59,0.92));
+        border: 1px solid rgba(148,163,184,0.16);
+        border-radius: 28px;
+        padding: 1.1rem 1.3rem;
+        margin-bottom: 1rem;
+    }
+    .orders-hero h1 {
+        margin: 0;
+        font-size: 2.1rem;
+        color: #f8fbff;
+        letter-spacing: -0.03em;
+    }
+    .orders-hero p {
+        margin: 0.35rem 0 0 0;
+        color: #cbd5e1;
+    }
+    .block {
+        background: rgba(15,23,42,0.78);
+        border: 1px solid rgba(148,163,184,0.14);
+        border-radius: 22px;
+        padding: 1rem;
+    }
+    .tiny-label {
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: #94a3b8;
+        margin-bottom: 0.4rem;
+    }
+    .stat {
+        padding: 0.9rem 1rem;
+        border-radius: 18px;
+        background: rgba(2,6,23,0.55);
+        border: 1px solid rgba(148,163,184,0.12);
+    }
+    .stat b {
+        font-size: 1.45rem;
+        color: white;
+    }
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.28rem 0.55rem;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        margin-left: 0.25rem;
+    }
+    </style>
+    """
+
 
 def _status_badge(status: str) -> str:
     colors = {
-        "ready_to_buy": "#ffb347",
-        "purchased": "#4db6ff",
-        "shipped": "#8ce99a",
-        "delivered": "#b197fc",
-        "problem": "#ff6b6b",
-        "new": "#94a3b8",
+        "READY": "#f59e0b",
+        "FULFILLED": "#4ade80",
+        "PENDING": "#38bdf8",
+        "SHIPPED": "#a78bfa",
+        "CANCELLED": "#fb7185",
+        "LIVE": "#22c55e",
+        "WARN": "#f59e0b",
+        "BLOCKED": "#fb7185",
+        "OK": "#38bdf8",
     }
-    return f"<span style='padding:0.35rem 0.65rem;border-radius:999px;background:{colors.get(status,'#777')};color:#111;font-weight:700;font-size:0.8rem;'>{status}</span>"
+    c = colors.get(str(status).upper(), "#94a3b8")
+    return f"<span class='badge' style='background:{c};color:#0b1220;'>{status}</span>"
+
+
+def _load_rate_limits(owner_name: str) -> dict:
+    try:
+        payload = call_ebay_api(owner_name, "GET", "/developer/analytics/v1_beta/rate_limit/")
+        return _extract_rate_limits(payload if isinstance(payload, dict) else {})
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _load_inventory(owner_name: str) -> list[dict]:
+    rows = []
+    offset = 0
+    while True:
+        path = f"/sell/inventory/v1/inventory_item?limit={DEFAULT_PAGE_SIZE}&offset={offset}"
+        payload = call_ebay_api(owner_name, "GET", path)
+        if not isinstance(payload, dict):
+            break
+
+        items = payload.get("inventoryItems") or payload.get("inventory_item") or payload.get("items") or []
+        if not items:
+            break
+
+        for item in items:
+            rows.append(_normalize_inventory_item(item))
+
+        if len(items) < DEFAULT_PAGE_SIZE:
+            break
+        offset += DEFAULT_PAGE_SIZE
+
+    return rows
+
+
+def _load_orders(owner_name: str) -> list[dict]:
+    rows = []
+    offset = 0
+    while True:
+        path = f"/sell/fulfillment/v1/order?limit={DEFAULT_PAGE_SIZE}&offset={offset}"
+        payload = call_ebay_api(owner_name, "GET", path)
+        if not isinstance(payload, dict):
+            break
+
+        orders = payload.get("orders") or []
+        if not orders:
+            break
+
+        for order in orders:
+            rows.extend(_normalize_fulfillment_order(order))
+
+        if len(orders) < DEFAULT_PAGE_SIZE:
+            break
+        offset += DEFAULT_PAGE_SIZE
+
+    return rows
+
 
 def render_orders() -> None:
-    st.markdown(
-        """
-        <style>
-        .hero-card {
-            background: linear-gradient(135deg, #101828 0%, #1d2939 100%);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 24px;
-            padding: 1.4rem 1.5rem;
-            margin-bottom: 1rem;
-        }
-        .hero-card h1 { margin: 0; font-size: 2.2rem; color: #f8fbff; }
-        .hero-card p { margin: 0.4rem 0 0 0; color: #cbd5e1; }
-        .stat-card {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 18px;
-            padding: 1rem;
-            min-height: 92px;
-        }
-        .stat-card label {
-            font-size: 0.8rem;
-            color: #9aa4b2;
-            display: block;
-            margin-bottom: 0.25rem;
-        }
-        .stat-card strong {
-            font-size: 1.6rem;
-            color: #ffffff;
-        }
-        .panel {
-            background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 18px;
-            padding: 1rem;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(_hero_css(), unsafe_allow_html=True)
 
     st.markdown(
         """
-        <div class="hero-card">
-            <h1>Orders Control Center</h1>
-            <p>Unified view for eBay fulfillment, client purchases, exceptions, and profit tracking.</p>
+        <div class="orders-shell">
+            <div class="orders-hero">
+                <h1>Orders Command Board</h1>
+                <p>Live eBay inventory and fulfillment orders, merged into one working view.</p>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    if "orders_df" not in st.session_state:
-        st.session_state.orders_df = _sample_orders()
+    owner_name = st.session_state.get("owner_name") or st.session_state.get("user") or ""
+    if not owner_name:
+        st.error("Missing owner_name in session state. Log in or set the active eBay account first.")
+        return
 
-    df = _ensure_columns(st.session_state.orders_df.copy())
+    rate = _load_rate_limits(owner_name)
+    pct = float(rate.get("pct", 0.0) or 0.0)
+    status = _rate_status(pct)
 
-    open_orders = len(df[df["status"].isin(["ready_to_buy", "purchased", "problem"])])
-    ebay_fill = len(df[(df["order_type"] == "fulfillment") & (df["order_id"].astype(str).str.startswith("EB-"))])
-    client_orders = len(df[df["order_type"] == "client_purchase"])
-    total_profit = float(df["profit"].sum()) if "profit" in df.columns else 0.0
+    top1, top2, top3, top4 = st.columns(4, gap="small")
+    top1.markdown(f"<div class='stat'><div class='tiny-label'>Rate Status</div><b>{_status_badge(status)}</b></div>", unsafe_allow_html=True)
+    top2.markdown(f"<div class='stat'><div class='tiny-label'>Used</div><b>{_format_pct(pct)}</b></div>", unsafe_allow_html=True)
+    top3.markdown(f"<div class='stat'><div class='tiny-label'>Remaining</div><b>{rate.get('remaining', '—')}</b></div>", unsafe_allow_html=True)
+    top4.markdown(f"<div class='stat'><div class='tiny-label'>Reset</div><b>{rate.get('reset', '—')}</b></div>", unsafe_allow_html=True)
 
-    s1, s2, s3, s4 = st.columns(4)
-    for col, label, value in [
-        (s1, "Open Orders", open_orders),
-        (s2, "eBay To Fill", ebay_fill),
-        (s3, "Client Orders", client_orders),
-        (s4, "Total Profit", f"${total_profit:.2f}"),
-    ]:
-        with col:
-            st.markdown(f"<div class='stat-card'><label>{label}</label><strong>{value}</strong></div>", unsafe_allow_html=True)
+    if status == "WARN":
+        st.warning("eBay API usage is above 80%. Refresh carefully.")
+    elif status == "BLOCKED":
+        st.error("eBay API usage is above 95%. Live refresh is blocked until the quota window resets.")
+        st.stop()
 
-    left, right = st.columns([0.28, 0.72], gap="large")
+    left, center, right = st.columns([0.22, 0.48, 0.30], gap="large")
 
-    with left:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        st.subheader("Filters")
+    with st.sidebar:
+        st.subheader("Queue")
+        kind_filter = st.radio("Mode", ["All", "Fulfillment", "Inventory"], horizontal=False)
+        status_search = st.multiselect("Status", ["READY", "FULFILLED", "PENDING", "SHIPPED", "LIVE", "WARN", "BLOCKED", "OK"], default=["READY", "FULFILLED", "PENDING", "SHIPPED", "LIVE"])
+        q = st.text_input("Search", placeholder="Order, SKU, client, item")
+        only_untracked = st.checkbox("Only untracked")
+        refresh = st.button("Refresh live data", use_container_width=True)
 
-        order_type = st.multiselect("Order type", sorted(df["order_type"].dropna().unique().tolist()), default=sorted(df["order_type"].dropna().unique().tolist()))
-        status = st.multiselect("Status", sorted(df["status"].dropna().unique().tolist()), default=sorted(df["status"].dropna().unique().tolist()))
-        priority = st.multiselect("Priority", sorted(df["priority"].dropna().unique().tolist()), default=sorted(df["priority"].dropna().unique().tolist()))
-        search = st.text_input("Search", placeholder="Order ID, client, item, supplier...")
-        only_problem = st.checkbox("Only problems", value=False)
-        only_untracked = st.checkbox("Only untracked", value=False)
-        st.markdown("</div>", unsafe_allow_html=True)
+    if "orders_live_cache" not in st.session_state or refresh:
+        inventory_rows = _load_inventory(owner_name)
+        order_rows = _load_orders(owner_name)
+        merged = inventory_rows + order_rows
+        st.session_state.orders_live_cache = merged
+        st.session_state.orders_last_sync = datetime.now(timezone.utc).isoformat()
 
-    filtered = df[
-        df["order_type"].isin(order_type)
-        & df["status"].isin(status)
-        & df["priority"].isin(priority)
-    ].copy()
+    rows = st.session_state.get("orders_live_cache", [])
+    df = pd.DataFrame(rows)
 
-    if search:
-        q = search.lower()
-        filtered = filtered[
-            filtered["order_id"].astype(str).str.lower().str.contains(q)
-            | filtered["client"].astype(str).str.lower().str.contains(q)
-            | filtered["item"].astype(str).str.lower().str.contains(q)
-            | filtered["supplier"].astype(str).str.lower().str.contains(q)
+    if df.empty:
+        st.warning("No eBay data returned from the live APIs.")
+        return
+
+    for col, default in {
+        "record_type": "",
+        "order_id": "",
+        "status": "",
+        "payment_status": "",
+        "fulfillment_status": "",
+        "sku": "",
+        "title": "",
+        "client": "",
+        "source": "",
+        "quantity": "",
+        "cost": "",
+        "price": "",
+        "profit": "",
+        "tracking": "",
+        "ship_by": "",
+        "updated_at": "",
+        "brand": "",
+    }.items():
+        if col not in df.columns:
+            df[col] = default
+
+    view = df.copy()
+
+    if kind_filter == "Fulfillment":
+        view = view[view["record_type"] == "order"]
+    elif kind_filter == "Inventory":
+        view = view[view["record_type"] == "inventory_item"]
+
+    if q:
+        s = q.lower()
+        view = view[
+            view["order_id"].astype(str).str.lower().str.contains(s)
+            | view["sku"].astype(str).str.lower().str.contains(s)
+            | view["client"].astype(str).str.lower().str.contains(s)
+            | view["title"].astype(str).str.lower().str.contains(s)
         ]
 
-    if only_problem:
-        filtered = filtered[filtered["status"] == "problem"]
-
     if only_untracked:
-        filtered = filtered[filtered["tracking"].astype(str).str.strip() == ""]
+        view = view[view["tracking"].astype(str).str.strip() == ""]
+
+    if not status_search:
+        view = view.iloc[0:0]
+    else:
+        view = view[
+            view["status"].astype(str).str.upper().isin([s.upper() for s in status_search])
+            | view["record_type"].eq("inventory_item")
+        ]
+
+    open_orders = len(view[(view["record_type"] == "order") & (~view["status"].astype(str).str.upper().isin(["FULFILLED", "CANCELLED"]))])
+    inventory_live = len(view[view["record_type"] == "inventory_item"])
+    order_count = len(view[view["record_type"] == "order"])
+    profit_total = pd.to_numeric(view["profit"], errors="coerce").fillna(0).sum()
+
+    with left:
+        st.markdown("<div class='block'>", unsafe_allow_html=True)
+        st.subheader("Queue")
+        st.write(f"Orders: {order_count}")
+        st.write(f"Inventory: {inventory_live}")
+        st.write(f"Open: {open_orders}")
+        st.write(f"Profit: ${profit_total:.2f}")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with center:
+        st.markdown("<div class='block'>", unsafe_allow_html=True)
+        st.subheader("Live Stream")
+        show = view.copy()
+        show["status"] = show["status"].apply(_status_badge)
+        cols = ["record_type", "order_id", "sku", "title", "client", "status", "payment_status", "fulfillment_status", "source", "quantity", "profit", "ship_by", "updated_at"]
+        present_cols = [c for c in cols if c in show.columns]
+        st.markdown(show[present_cols].to_html(index=False, escape=False), unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        with st.expander("Raw JSON", expanded=False):
+            selected_idx = st.selectbox("Select row", list(range(len(view))), format_func=lambda i: f"{view.iloc[i].get('order_id', view.iloc[i].get('sku', 'row'))}")
+            st.json(view.iloc[selected_idx].get("raw", {}))
 
     with right:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        st.subheader("Live Orders")
-        view = filtered.copy()
-        view["status_badge"] = view["status"].apply(_status_badge)
-        show_cols = ["order_id", "order_type", "status", "client", "item", "supplier", "cost", "profit", "tracking", "created_at"]
-        st.markdown(view[show_cols].to_html(index=False, escape=False), unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    a, b, c = st.columns([0.42, 0.28, 0.30], gap="large")
-
-    with a:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        st.subheader("Order Focus")
-        if not filtered.empty:
-            selected_id = st.selectbox("Select order", filtered["order_id"].tolist(), label_visibility="collapsed")
-            selected = filtered[filtered["order_id"] == selected_id].iloc[0]
-            st.write(f"**Client:** {selected['client']}")
-            st.write(f"**Item:** {selected['item']}")
-            st.write(f"**Supplier:** {selected['supplier']}")
-            st.write(f"**Tracking:** {selected['tracking'] or 'Pending'}")
-            st.markdown(f"**Status:** {_status_badge(selected['status'])}", unsafe_allow_html=True)
+        st.markdown("<div class='block'>", unsafe_allow_html=True)
+        st.subheader("Inspector")
+        if not view.empty:
+            pick = st.selectbox("Inspect", view.index.tolist(), format_func=lambda i: str(view.loc[i, "order_id"] or view.loc[i, "sku"]))
+            row = view.loc[pick]
+            st.write(f"**Type:** {row['record_type']}")
+            st.write(f"**ID:** {row['order_id'] or row['sku']}")
+            st.write(f"**Title:** {row['title']}")
+            st.write(f"**Client:** {row['client']}")
+            st.write(f"**Source:** {row['source']}")
+            st.write(f"**Tracking:** {row['tracking'] or 'Pending'}")
+            st.markdown(f"**Status:** {_status_badge(str(row['status']))}", unsafe_allow_html=True)
         else:
-            st.warning("No matching orders.")
+            st.info("Nothing to inspect.")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    with b:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='block'>", unsafe_allow_html=True)
         st.subheader("Actions")
         st.button("Mark Purchased", use_container_width=True)
         st.button("Add Tracking", use_container_width=True)
         st.button("Mark Shipped", use_container_width=True)
-        st.button("Mark Problem", use_container_width=True)
-        st.button("Archive Order", use_container_width=True)
+        st.button("Flag Issue", use_container_width=True)
+        st.button("Archive", use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
-
-    with c:
-        st.markdown("<div class='panel'>", unsafe_allow_html=True)
-        st.subheader("Insights")
-        st.write(f"**Filtered:** {len(filtered)}")
-        st.write(f"**Problems:** {len(filtered[filtered['status'] == 'problem'])}")
-        st.write(f"**Untracked:** {len(filtered[filtered['tracking'].astype(str).str.strip() == ''])}")
-        st.write(f"**Profit:** ${filtered['profit'].sum():.2f}")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with st.expander("Edit orders table", expanded=False):
-        st.data_editor(
-            filtered[["order_id", "order_type", "status", "client", "item", "supplier", "cost", "sell_price", "profit", "tracking", "priority"]],
-            use_container_width=True,
-            hide_index=True,
-            num_rows="dynamic",
-            key="orders_editor",
-        )
-        if st.button("Save edited view"):
-            st.success("Edited orders captured for testing.")
