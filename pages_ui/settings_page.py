@@ -3,6 +3,7 @@ import streamlit as st
 from config.ceo_settings import CEO_SETTINGS
 from core.ebay_account_store import (
     delete_ebay_account,
+    delete_ebay_accounts_for_owners,
     get_connected_ebay_label,
     get_latest_ebay_account,
     save_ebay_account,
@@ -28,6 +29,29 @@ def _current_owner_name() -> str:
 
 def _current_role() -> str:
     return st.session_state.get("role") or "CLIENT"
+
+def _owner_disconnect_candidates(owner_name: str) -> list[str]:
+    """All owner keys that may have been used by older/current OAuth saves."""
+    candidates = [owner_name, "default"]
+    for key in ("client_name", "username", "owner_name", "email", "current_user"):
+        value = st.session_state.get(key)
+        if isinstance(value, str) and value.strip():
+            candidates.append(value.strip())
+
+    role = st.session_state.get("role")
+    if isinstance(role, str) and role.strip():
+        candidates.append(role.strip())
+
+    seen = set()
+    clean = []
+    for item in candidates:
+        item = (item or "").strip()
+        if item and item not in seen:
+            seen.add(item)
+            clean.append(item)
+    return clean
+
+
 
 
 def process_ebay_oauth_callback_if_present():
@@ -105,7 +129,10 @@ def render_ebay_connection(environment_options: list[str]) -> None:
         )
 
         if st.button("Disconnect eBay account", type="secondary", use_container_width=True):
-            delete_ebay_account(owner_name)
+            delete_ebay_accounts_for_owners(_owner_disconnect_candidates(owner_name))
+            for key in list(st.session_state.keys()):
+                if key.startswith("orders_live_") or key.startswith("ebay_oauth_"):
+                    del st.session_state[key]
             st.success("Disconnected eBay account and removed saved tokens.")
             st.rerun()
 

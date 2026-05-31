@@ -10,52 +10,13 @@ import requests
 import streamlit as st
 
 
-# Keep this list seller-focused so eBay sign-in does not break.
-# Do NOT include Client Credential-only scopes here.
-DEFAULT_SCOPES = [
+SCOPES = [
     "https://api.ebay.com/oauth/api_scope",
     "https://api.ebay.com/oauth/api_scope/sell.account",
-    "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
     "https://api.ebay.com/oauth/api_scope/sell.inventory",
-    "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
     "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
-    "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
     "https://api.ebay.com/oauth/api_scope/sell.marketing",
-    "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
-    "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
-    "https://api.ebay.com/oauth/api_scope/sell.finances",
-    "https://api.ebay.com/oauth/api_scope/sell.item",
-    "https://api.ebay.com/oauth/api_scope/sell.item.draft",
-    "https://api.ebay.com/oauth/api_scope/sell.stores",
-    "https://api.ebay.com/oauth/api_scope/sell.stores.readonly",
-    "https://api.ebay.com/oauth/api_scope/commerce.catalog.readonly",
-    "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly",
 ]
-
-
-def get_oauth_scopes() -> list[str]:
-    """
-    Production-safe scope loader.
-
-    By default we use seller-focused Authorization Code scopes.
-    If you later want to override from Streamlit secrets, add:
-
-    EBAY_OAUTH_SCOPES = "scope1 scope2 scope3"
-
-    Do not include Client Credential-only scopes here.
-    """
-    configured = st.secrets.get("EBAY_OAUTH_SCOPES")
-    if configured:
-        if isinstance(configured, str):
-            scopes = configured.replace("\n", " ").split()
-        else:
-            scopes = list(configured)
-        return [scope.strip() for scope in scopes if str(scope).strip()]
-    return DEFAULT_SCOPES
-
-
-# Backward-compatible constant for older imports.
-SCOPES = DEFAULT_SCOPES
 
 
 def get_ebay_config(environment: str) -> dict[str, str]:
@@ -130,10 +91,7 @@ def build_ebay_oauth_url(
     marketplace_id: str = "EBAY_US",
 ) -> str:
     environment = (environment or "production").lower()
-    role = role or "CLIENT"
-
-    # Clients can only connect production. CEO/admin can test sandbox.
-    if role.upper() != "CEO":
+    if role != "CEO":
         environment = "production"
 
     config = get_ebay_config(environment)
@@ -141,7 +99,7 @@ def build_ebay_oauth_url(
     state = _sign_state(
         {
             "owner_name": owner_name or "default",
-            "role": role.upper(),
+            "role": role or "CLIENT",
             "environment": environment,
             "marketplace_id": marketplace_id or "EBAY_US",
             "iat": int(time.time()),
@@ -152,7 +110,7 @@ def build_ebay_oauth_url(
         "client_id": config["client_id"],
         "redirect_uri": config["ru_name"],
         "response_type": "code",
-        "scope": " ".join(get_oauth_scopes()),
+        "scope": " ".join(SCOPES),
         "state": state,
         "prompt": "login",
     }
@@ -160,18 +118,14 @@ def build_ebay_oauth_url(
     return config["auth_url"] + "?" + urllib.parse.urlencode(params)
 
 
-def _basic_auth_header(client_id: str, client_secret: str) -> str:
-    credentials = f"{client_id}:{client_secret}"
-    encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
-    return f"Basic {encoded_credentials}"
-
-
 def exchange_code_for_tokens(code: str, environment: str) -> dict[str, Any]:
     config = get_ebay_config(environment)
+    credentials = f"{config['client_id']}:{config['client_secret']}"
+    encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
 
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
-        "Authorization": _basic_auth_header(config["client_id"], config["client_secret"]),
+        "Authorization": f"Basic {encoded_credentials}",
     }
 
     data = {
@@ -190,18 +144,20 @@ def exchange_code_for_tokens(code: str, environment: str) -> dict[str, Any]:
 
 def refresh_access_token(refresh_token: str, environment: str) -> dict[str, Any]:
     config = get_ebay_config(environment)
+    credentials = f"{config['client_id']}:{config['client_secret']}"
+    encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
 
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
-        "Authorization": _basic_auth_header(config["client_id"], config["client_secret"]),
+        "Authorization": f"Basic {encoded_credentials}",
     }
 
+    # Do NOT send scope during refresh.
+    # eBay refresh tokens can only be refreshed for scopes already granted.
+    # Sending a broader/different scope list causes invalid_scope even when login worked.
     data = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
-        # Request the same valid Authorization Code scopes. This keeps API
-        # permissions consistent after refresh.
-        "scope": " ".join(get_oauth_scopes()),
     }
 
     response = requests.post(config["token_url"], headers=headers, data=data, timeout=30)
@@ -216,8 +172,8 @@ def get_ebay_user_profile(access_token: str, environment: str) -> dict[str, Any]
     config = get_ebay_config(environment)
     headers = {"Authorization": f"Bearer {access_token}"}
 
-    # Requires commerce.identity.readonly. If unavailable, OAuth still succeeds;
-    # the account label will fall back to Connected eBay account.
+    # Best-effort profile endpoint. If eBay returns a scope/product-specific
+    # error, OAuth still saves; username/store may just be blank.
     url = f"{config['api_base']}/commerce/identity/v1/user/"
     response = requests.get(url, headers=headers, timeout=30)
 

@@ -137,6 +137,12 @@ def get_latest_ebay_account(owner_name: str) -> dict[str, Any] | None:
 
 
 def delete_ebay_account(owner_name: str) -> None:
+    """Delete the saved eBay connection for this app owner.
+
+    This is used by the Settings disconnect button. It removes the saved
+    encrypted tokens so the next Connect button starts a fresh OAuth flow.
+    """
+    owner_name = (owner_name or "default").strip() or "default"
     url = (
         f"{_supabase_url()}/rest/v1/ebay_accounts"
         f"?owner_name=eq.{requests.utils.quote(owner_name)}"
@@ -145,6 +151,22 @@ def delete_ebay_account(owner_name: str) -> None:
 
     if response.status_code not in (200, 202, 204):
         raise RuntimeError(f"Supabase delete failed: {response.status_code} {response.text}")
+
+
+def delete_ebay_accounts_for_owners(owner_names: list[str]) -> None:
+    """Delete saved eBay connections for several possible owner keys.
+
+    Older builds sometimes saved accounts under "default"; current builds save
+    under the signed OAuth state owner. Disconnect should remove both so users
+    are not stuck connected to a stale account.
+    """
+    seen: set[str] = set()
+    for owner in owner_names:
+        clean = (owner or "").strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        delete_ebay_account(clean)
 
 
 def get_connected_ebay_label(owner_name: str) -> str:
@@ -172,8 +194,17 @@ def get_ebay_api_context(owner_name: str) -> dict[str, Any]:
     if not refresh_token:
         raise RuntimeError("Saved eBay account is missing refresh token. Disconnect and reconnect eBay.")
 
-    # Refresh every time for reliability. Later you can add expires_at caching.
-    refreshed = refresh_access_token(refresh_token, account["environment"])
+    # Refresh every time for reliability. eBay access tokens are short-lived.
+    # refresh_access_token intentionally does not send a scope parameter because
+    # asking for a different/broader scope during refresh causes invalid_scope.
+    try:
+        refreshed = refresh_access_token(refresh_token, account["environment"])
+    except Exception as exc:
+        raise RuntimeError(
+            "Your saved eBay connection could not be refreshed. "
+            "Disconnect and reconnect eBay in Settings."
+        ) from exc
+
     if refreshed.get("access_token"):
         access_token = refreshed["access_token"]
         token_data = {
