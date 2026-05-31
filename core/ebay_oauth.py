@@ -152,12 +152,10 @@ def refresh_access_token(refresh_token: str, environment: str) -> dict[str, Any]
         "Authorization": f"Basic {encoded_credentials}",
     }
 
-    # Do NOT send scope during refresh.
-    # eBay refresh tokens can only be refreshed for scopes already granted.
-    # Sending a broader/different scope list causes invalid_scope even when login worked.
     data = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
+        "scope": " ".join(SCOPES),
     }
 
     response = requests.post(config["token_url"], headers=headers, data=data, timeout=30)
