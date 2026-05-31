@@ -1,3 +1,4 @@
+
 import streamlit as st
 
 from config.ceo_settings import CEO_SETTINGS
@@ -25,9 +26,8 @@ st.set_page_config(
 load_css()
 init_session()
 
-# IMPORTANT:
-# eBay redirects back to a fresh Streamlit session. This must run BEFORE the
-# login gate so OAuth can save even when the user lands on the login page.
+# eBay redirects back to the app root. Process/save this before the login gate,
+# because the returned browser session may not have the same Streamlit state.
 process_ebay_oauth_callback_if_present()
 
 PAGES = {

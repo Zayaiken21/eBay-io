@@ -1,13 +1,14 @@
+
 import streamlit as st
 
 from config.ceo_settings import CEO_SETTINGS
+from core.ebay_oauth import build_ebay_oauth_url, handle_oauth_callback
 from core.ebay_account_store import (
-    delete_ebay_account,
+    disconnect_ebay_account,
     get_connected_ebay_label,
     get_latest_ebay_account,
     save_ebay_account,
 )
-from core.ebay_oauth import build_ebay_oauth_url, handle_oauth_callback
 from core.token_store import (
     create_token,
     load_tokens,
@@ -19,56 +20,46 @@ from core.token_store import (
 def _current_owner_name() -> str:
     return (
         st.session_state.get("client_name")
-        or st.session_state.get("username")
         or st.session_state.get("owner_name")
-        or st.session_state.get("role")
+        or st.session_state.get("username")
         or "default"
     )
 
 
-def _current_role() -> str:
-    return st.session_state.get("role") or "CLIENT"
-
-
-def process_ebay_oauth_callback_if_present():
+def process_ebay_oauth_callback_if_present() -> bool:
     """
-    Runs on every app load. eBay redirects to the app root with ?code=...&state=...
-    after login, often in a new Streamlit session. The signed state contains the
-    owner/role/environment, so saving does not depend on session_state.
+    Must be safe to call before the app login gate. eBay redirects to the root
+    Streamlit app with ?code=...&state=..., so the owner/environment must come
+    from the signed OAuth state, not from st.session_state.
     """
     params = st.query_params
-
     if "code" not in params or "state" not in params:
-        return None
+        return False
 
     try:
-        code = params.get("code")
-        state = params.get("state")
-
-        result = handle_oauth_callback(code=code, state=state)
-        state_payload = result["state"]
-
-        save_ebay_account(
-            owner_name=state_payload["owner_name"],
-            role=state_payload["role"],
-            environment=state_payload["environment"],
-            marketplace_id=state_payload.get("marketplace_id", "EBAY_US"),
-            token_data=result["token_data"],
-            ebay_user=result.get("ebay_user") or {},
+        result = handle_oauth_callback(
+            code=params["code"],
+            state=params["state"],
         )
 
-        st.session_state["ebay_oauth_success"] = True
-        st.session_state["ebay_oauth_owner_name"] = state_payload["owner_name"]
-        st.session_state["active_page"] = "Settings"
+        save_ebay_account(
+            owner_name=result.get("owner_name", "default"),
+            role=result.get("role", "CLIENT"),
+            environment=result.get("environment", "production"),
+            marketplace_id=result.get("marketplace_id", "EBAY_US"),
+            token_data=result.get("token_data", {}),
+            ebay_user=result.get("ebay_user", {}),
+        )
 
+        st.session_state["active_page"] = result.get("return_page", "Settings")
+        st.session_state["ebay_oauth_success"] = True
         st.query_params.clear()
-        st.success("eBay account connected successfully.")
-        return result
+        return True
 
     except Exception as exc:
+        st.session_state["ebay_oauth_error"] = str(exc)
         st.query_params.clear()
-        st.error(f"eBay OAuth callback error: {exc}")
-        return None
+        return False
 
 
 def render_settings() -> None:
@@ -82,7 +73,14 @@ def render_settings() -> None:
         unsafe_allow_html=True,
     )
 
-    if st.session_state.get("role") == "CEO":
+    if st.session_state.pop("ebay_oauth_success", False):
+        st.success("eBay account connected successfully.")
+
+    oauth_error = st.session_state.pop("ebay_oauth_error", None)
+    if oauth_error:
+        st.error(f"eBay OAuth callback error: {oauth_error}")
+
+    if st.session_state.role == "CEO":
         render_ceo_settings()
     else:
         render_client_settings()
@@ -90,54 +88,52 @@ def render_settings() -> None:
 
 def render_ebay_connection(environment_options: list[str]) -> None:
     owner_name = _current_owner_name()
-    role = _current_role()
+    role = st.session_state.get("role") or "CLIENT"
 
     st.subheader("Connect eBay Account")
 
-    saved = get_latest_ebay_account(owner_name)
+    environment = st.selectbox("Environment", environment_options, key="ebay_environment")
+    marketplace_id = st.selectbox("Marketplace", ["EBAY_US"], index=0, key="ebay_marketplace")
 
+    saved = get_latest_ebay_account(owner_name, environment)
     if saved:
-        st.success(f"Connected: {get_connected_ebay_label(owner_name)}")
-        st.caption(
-            f"Owner: {saved.get('owner_name')} | "
-            f"Environment: {saved.get('environment')} | "
-            f"Marketplace: {saved.get('marketplace_id', 'EBAY_US')}"
-        )
+        st.success(f"Connected: {get_connected_ebay_label(owner_name, environment)}")
+        st.caption("This account will be used for live eBay API calls across the app.")
 
-        if st.button("Disconnect eBay account", type="secondary", use_container_width=True):
-            delete_ebay_account(owner_name)
-            st.success("Disconnected eBay account and removed saved tokens.")
-            st.rerun()
+        cols = st.columns([1, 1])
+        with cols[0]:
+            if st.button("Disconnect eBay Account", use_container_width=True, type="secondary"):
+                try:
+                    disconnect_ebay_account(owner_name, environment)
+                    st.session_state.pop("orders_live_cache", None)
+                    st.session_state.pop("orders_last_sync", None)
+                    st.success("eBay account disconnected. You can connect a new account now.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Disconnect failed: {exc}")
 
-        st.divider()
-        st.info("Only one eBay account can be connected at a time. Disconnect first to connect another.")
+        with cols[1]:
+            oauth_url = build_ebay_oauth_url(
+                owner_name=owner_name,
+                role=role,
+                environment=environment,
+                marketplace_id=marketplace_id,
+                return_page="Settings",
+            )
+            st.link_button("Reconnect / Replace Account", oauth_url, use_container_width=True)
         return
 
     st.info("No eBay account connected yet.")
-
-    marketplace_id = st.selectbox("Marketplace", ["EBAY_US"], index=0)
-
-    if role == "CEO":
-        environment = st.radio("Environment", environment_options, horizontal=True)
-    else:
-        environment = "production"
-        st.caption("Client accounts connect to production eBay only.")
+    st.caption("You will leave this app, sign into eBay, approve access, and return automatically.")
 
     oauth_url = build_ebay_oauth_url(
         owner_name=owner_name,
         role=role,
         environment=environment,
         marketplace_id=marketplace_id,
+        return_page="Settings",
     )
-
-    st.markdown(
-        "You will leave this app, sign into eBay, approve access, and return automatically."
-    )
-    st.link_button(
-        f"Connect eBay {environment.title()} Account",
-        oauth_url,
-        use_container_width=True,
-    )
+    st.link_button("Connect eBay Account", oauth_url, use_container_width=True, type="primary")
 
 
 def render_ceo_settings() -> None:
