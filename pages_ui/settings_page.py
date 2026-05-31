@@ -15,52 +15,63 @@ from core.token_store import (
 )
 
 
+def _get_query_value(name: str) -> str | None:
+    value = st.query_params.get(name)
+    if isinstance(value, list):
+        return value[0] if value else None
+    return value
+
+
 def _get_owner_name() -> str:
-    return st.session_state.get("client_name") or st.session_state.get("username") or "CEO"
+    return (
+        st.session_state.get("client_name")
+        or st.session_state.get("username")
+        or st.session_state.get("owner_name")
+        or "CEO"
+    )
 
 
 def _get_role() -> str:
-    return st.session_state.get("role") or "CLIENT"
+    return str(st.session_state.get("role") or "CLIENT").upper()
 
 
 def process_ebay_oauth_callback_if_present() -> None:
-    query_params = st.query_params
+    """
+    Called by app.py on every run. It only does work when eBay has redirected
+    back with ?code=...&state=...
+    """
+    code = _get_query_value("code")
+    state = _get_query_value("state")
+    error = _get_query_value("error")
+    error_description = _get_query_value("error_description")
 
-    if "code" not in query_params or "state" not in query_params:
+    if error:
+        st.error(f"eBay authorization failed: {error_description or error}")
+        st.query_params.clear()
         return
 
-    code = query_params.get("code")
-    state = query_params.get("state")
+    if not code or not state:
+        return
 
-    if isinstance(code, list):
-        code = code[0]
-    if isinstance(state, list):
-        state = state[0]
+    result = handle_oauth_callback(code=code, state=state)
+    oauth_state = result["state"]
 
-    try:
-        result = handle_oauth_callback(code=code, state=state)
-        oauth_state = result["state"]
+    save_ebay_account(
+        owner_name=oauth_state.get("owner_name", "Unknown"),
+        role=oauth_state.get("role", "CLIENT"),
+        environment=oauth_state.get("environment", "production"),
+        marketplace_id=oauth_state.get("marketplace_id", "EBAY_US"),
+        token_data=result.get("token_data", {}),
+        profile=result.get("profile", {}),
+    )
 
-        save_ebay_account(
-            owner_name=oauth_state["owner_name"],
-            role=oauth_state["role"],
-            environment=oauth_state["environment"],
-            marketplace_id=oauth_state.get("marketplace_id", "EBAY_US"),
-            token_data=result["token_data"],
-            profile=result.get("profile", {}),
-        )
-
-        st.session_state["ebay_oauth_success"] = True
-        st.query_params.clear()
-        st.rerun()
-
-    except Exception as exc:
-        st.error(f"eBay OAuth connection failed: {exc}")
+    st.session_state["ebay_oauth_success"] = True
+    st.session_state["active_page"] = "Settings"
+    st.query_params.clear()
+    st.rerun()
 
 
 def render_settings() -> None:
-    process_ebay_oauth_callback_if_present()
-
     st.markdown(
         """
         <section class="app-hero">
@@ -74,7 +85,7 @@ def render_settings() -> None:
     if st.session_state.pop("ebay_oauth_success", False):
         st.success("eBay account connected and saved successfully.")
 
-    if st.session_state.role == "CEO":
+    if _get_role() == "CEO":
         render_ceo_settings()
     else:
         render_client_settings()
@@ -86,7 +97,12 @@ def render_ebay_connection(environment_options: list[str]) -> None:
 
     st.subheader("Connect eBay Account")
 
-    saved = get_latest_ebay_account(owner_name)
+    try:
+        saved = get_latest_ebay_account(owner_name)
+    except Exception as exc:
+        saved = None
+        st.error(f"Could not load saved eBay account: {exc}")
+
     if saved:
         st.success(f"Connected: {get_connected_ebay_label(owner_name)}")
 
@@ -102,9 +118,14 @@ def render_ebay_connection(environment_options: list[str]) -> None:
     else:
         st.info("No eBay account connected yet.")
 
-    marketplace_id = st.selectbox("Marketplace", ["EBAY_US"], index=0, key="ebay_marketplace_id")
+    marketplace_id = st.selectbox(
+        "Marketplace",
+        ["EBAY_US"],
+        index=0,
+        key="ebay_marketplace_id",
+    )
 
-    if len(environment_options) > 1:
+    if role == "CEO" and len(environment_options) > 1:
         environment = st.radio(
             "Environment",
             environment_options,
@@ -112,21 +133,23 @@ def render_ebay_connection(environment_options: list[str]) -> None:
             key="ebay_oauth_environment",
         )
     else:
-        environment = environment_options[0]
-        st.caption("Clients connect to Production only.")
+        environment = "production"
+        st.caption("Client accounts connect to Production only.")
 
-    oauth_url = build_ebay_oauth_url(
-        owner_name=owner_name,
-        role=role,
-        environment=environment,
-        marketplace_id=marketplace_id,
-    )
-
-    st.link_button(
-        f"Connect eBay {environment.title()} Account",
-        oauth_url,
-        use_container_width=True,
-    )
+    try:
+        oauth_url = build_ebay_oauth_url(
+            owner_name=owner_name,
+            role=role,
+            environment=environment,
+            marketplace_id=marketplace_id,
+        )
+        st.link_button(
+            f"Connect eBay {environment.title()} Account",
+            oauth_url,
+            use_container_width=True,
+        )
+    except Exception as exc:
+        st.error(f"OAuth setup is incomplete: {exc}")
 
     st.caption("You will leave this app, sign into eBay, approve access, and return automatically.")
 
@@ -211,3 +234,35 @@ def render_ceo_settings() -> None:
 
 def render_client_settings() -> None:
     render_ebay_connection(["production"])
+
+def process_ebay_oauth_callback_if_present():
+    import streamlit as st
+    from core.ebay_oauth import handle_oauth_callback
+    from core.ebay_account_store import save_ebay_account
+
+    params = st.query_params
+
+    if "code" not in params or "state" not in params:
+        return None
+
+    try:
+        result = handle_oauth_callback(
+            code=params["code"],
+            state=params["state"],
+        )
+
+        save_ebay_account(
+            owner_name=result.get("owner_name", "default"),
+            role=result.get("role", "client"),
+            environment=result.get("environment", "production"),
+            token_data=result.get("token_data", {}),
+            ebay_user=result.get("ebay_user", {}),
+        )
+
+        st.query_params.clear()
+        st.success("eBay account connected successfully.")
+        return result
+
+    except Exception as e:
+        st.error(f"eBay OAuth callback error: {e}")
+        return None

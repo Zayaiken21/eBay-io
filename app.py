@@ -9,7 +9,7 @@ from pages_ui.login import render_login
 from pages_ui.dashboard import render_dashboard
 from pages_ui.products import render_products
 from pages_ui.analytics import render_analytics
-from pages_ui.settings_page import render_settings
+from pages_ui.settings_page import render_settings, process_ebay_oauth_callback_if_present
 from pages_ui.ai_blogger import render_ai_blogger
 from pages_ui.orders import render_orders
 from pages_ui.catalog_pro import render_catalog_pro
@@ -25,15 +25,9 @@ st.set_page_config(
 load_css()
 init_session()
 
-# Handle eBay OAuth callback immediately after eBay redirects back.
-# This keeps your existing page structure intact.
-try:
-    from pages_ui.settings_page import process_ebay_oauth_callback_if_present
-    process_ebay_oauth_callback_if_present()
-except Exception as oauth_callback_error:
-    # Show the error only when this request looks like an OAuth callback.
-    if "code" in st.query_params or "state" in st.query_params:
-        st.error(f"eBay OAuth callback error: {oauth_callback_error}")
+# eBay redirects back to this app with ?code=...&state=...
+# Process it before rendering any normal page so the token is saved automatically.
+process_ebay_oauth_callback_if_present()
 
 
 PAGES = {
@@ -45,6 +39,7 @@ PAGES = {
     "Orders": render_orders,
     "Catalog-Pro": render_catalog_pro,
 }
+
 
 if not st.session_state.authenticated:
     render_login()

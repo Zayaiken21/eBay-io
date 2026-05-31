@@ -19,23 +19,32 @@ SCOPES = [
 ]
 
 
-def get_ebay_config(environment: str) -> dict[str, str]:
-    environment = (environment or "production").lower()
+def _get_secret(name: str) -> str:
+    value = st.secrets.get(name)
+    if not value:
+        raise RuntimeError(f"Missing {name} in Streamlit secrets.")
+    return str(value)
 
-    if environment == "sandbox":
+
+def get_ebay_config(environment: str) -> dict[str, str]:
+    env = (environment or "production").lower().strip()
+
+    if env == "sandbox":
         return {
-            "client_id": st.secrets["EBAY_SANDBOX_CLIENT_ID"],
-            "client_secret": st.secrets["EBAY_SANDBOX_CLIENT_SECRET"],
-            "ru_name": st.secrets["EBAY_SANDBOX_RU_NAME"],
+            "environment": "sandbox",
+            "client_id": _get_secret("EBAY_SANDBOX_CLIENT_ID"),
+            "client_secret": _get_secret("EBAY_SANDBOX_CLIENT_SECRET"),
+            "ru_name": _get_secret("EBAY_SANDBOX_RU_NAME"),
             "auth_url": "https://auth.sandbox.ebay.com/oauth2/authorize",
             "token_url": "https://api.sandbox.ebay.com/identity/v1/oauth2/token",
             "api_base": "https://api.sandbox.ebay.com",
         }
 
     return {
-        "client_id": st.secrets["EBAY_PROD_CLIENT_ID"],
-        "client_secret": st.secrets["EBAY_PROD_CLIENT_SECRET"],
-        "ru_name": st.secrets["EBAY_PROD_RU_NAME"],
+        "environment": "production",
+        "client_id": _get_secret("EBAY_PROD_CLIENT_ID"),
+        "client_secret": _get_secret("EBAY_PROD_CLIENT_SECRET"),
+        "ru_name": _get_secret("EBAY_PROD_RU_NAME"),
         "auth_url": "https://auth.ebay.com/oauth2/authorize",
         "token_url": "https://api.ebay.com/identity/v1/oauth2/token",
         "api_base": "https://api.ebay.com",
@@ -52,7 +61,7 @@ def _b64url_decode(value: str) -> bytes:
 
 
 def _sign_state(payload: dict[str, Any]) -> str:
-    secret = st.secrets["OAUTH_STATE_SECRET"].encode("utf-8")
+    secret = _get_secret("OAUTH_STATE_SECRET").encode("utf-8")
     raw_json = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     raw_b64 = _b64url_encode(raw_json)
     signature = hmac.new(secret, raw_b64.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -60,12 +69,15 @@ def _sign_state(payload: dict[str, Any]) -> str:
 
 
 def verify_state(state: str) -> dict[str, Any]:
+    if not state:
+        raise ValueError("Missing OAuth state.")
+
     try:
         raw_b64, signature = state.split(".", 1)
     except ValueError as exc:
         raise ValueError("Invalid OAuth state format.") from exc
 
-    secret = st.secrets["OAUTH_STATE_SECRET"].encode("utf-8")
+    secret = _get_secret("OAUTH_STATE_SECRET").encode("utf-8")
     expected = hmac.new(secret, raw_b64.encode("utf-8"), hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(signature, expected):
@@ -74,7 +86,7 @@ def verify_state(state: str) -> dict[str, Any]:
     payload = json.loads(_b64url_decode(raw_b64).decode("utf-8"))
 
     issued_at = int(payload.get("iat", 0))
-    if int(time.time()) - issued_at > 900:
+    if int(time.time()) - issued_at > 60 * 30:
         raise ValueError("OAuth state expired. Please connect eBay again.")
 
     return payload
@@ -87,15 +99,21 @@ def build_ebay_oauth_url(
     environment: str,
     marketplace_id: str = "EBAY_US",
 ) -> str:
-    environment = (environment or "production").lower()
-    config = get_ebay_config(environment)
+    env = (environment or "production").lower().strip()
+    config = get_ebay_config(env)
+
+    # Safety: non-CEO/client users are production-only.
+    normalized_role = (role or "CLIENT").upper()
+    if normalized_role != "CEO":
+        env = "production"
+        config = get_ebay_config("production")
 
     state = _sign_state(
         {
-            "owner_name": owner_name,
-            "role": role,
-            "environment": environment,
-            "marketplace_id": marketplace_id,
+            "owner_name": owner_name or "Unknown",
+            "role": normalized_role,
+            "environment": env,
+            "marketplace_id": marketplace_id or "EBAY_US",
             "iat": int(time.time()),
         }
     )
@@ -118,18 +136,19 @@ def exchange_code_for_tokens(code: str, environment: str) -> dict[str, Any]:
     credentials = f"{config['client_id']}:{config['client_secret']}"
     encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
 
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Authorization": f"Basic {encoded_credentials}",
-    }
-
-    data = {
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": config["ru_name"],
-    }
-
-    response = requests.post(config["token_url"], headers=headers, data=data, timeout=30)
+    response = requests.post(
+        config["token_url"],
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {encoded_credentials}",
+        },
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": config["ru_name"],
+        },
+        timeout=30,
+    )
 
     if response.status_code != 200:
         raise RuntimeError(f"eBay token exchange failed: {response.status_code} {response.text}")
@@ -143,18 +162,19 @@ def refresh_access_token(refresh_token: str, environment: str) -> dict[str, Any]
     credentials = f"{config['client_id']}:{config['client_secret']}"
     encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
 
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Authorization": f"Basic {encoded_credentials}",
-    }
-
-    data = {
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-        "scope": " ".join(SCOPES),
-    }
-
-    response = requests.post(config["token_url"], headers=headers, data=data, timeout=30)
+    response = requests.post(
+        config["token_url"],
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {encoded_credentials}",
+        },
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "scope": " ".join(SCOPES),
+        },
+        timeout=30,
+    )
 
     if response.status_code != 200:
         raise RuntimeError(f"eBay token refresh failed: {response.status_code} {response.text}")
@@ -175,7 +195,7 @@ def get_ebay_user_profile(access_token: str, environment: str) -> dict[str, Any]
     )
 
     if response.status_code != 200:
-        # Do not fail the whole connection just because profile lookup failed.
+        # Do not block token saving because profile lookup can fail for scope/account reasons.
         return {
             "lookup_failed": True,
             "status_code": response.status_code,
@@ -186,13 +206,18 @@ def get_ebay_user_profile(access_token: str, environment: str) -> dict[str, Any]
 
 
 def handle_oauth_callback(code: str, state: str) -> dict[str, Any]:
-    state_payload = verify_state(state)
+    if isinstance(code, list):
+        code = code[0]
+    if isinstance(state, list):
+        state = state[0]
+
+    state_payload = verify_state(str(state))
     environment = state_payload["environment"]
 
-    token_data = exchange_code_for_tokens(code, environment)
+    token_data = exchange_code_for_tokens(str(code), environment)
     access_token = token_data.get("access_token")
 
-    profile = {}
+    profile: dict[str, Any] = {}
     if access_token:
         profile = get_ebay_user_profile(access_token, environment)
 
