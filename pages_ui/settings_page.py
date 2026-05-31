@@ -2,6 +2,8 @@ import streamlit as st
 
 from config.ceo_settings import CEO_SETTINGS
 from core.ebay_account_store import (
+    call_ebay_api,
+    disconnect_ebay_account,
     get_connected_ebay_label,
     get_latest_ebay_account,
     save_ebay_account,
@@ -37,8 +39,8 @@ def _get_role() -> str:
 
 def process_ebay_oauth_callback_if_present() -> None:
     """
-    Called by app.py on every run. It only does work when eBay has redirected
-    back with ?code=...&state=...
+    Called by app.py on every run. It only does work when eBay redirects back
+    with ?code=...&state=...
     """
     code = _get_query_value("code")
     state = _get_query_value("state")
@@ -53,22 +55,25 @@ def process_ebay_oauth_callback_if_present() -> None:
     if not code or not state:
         return
 
-    result = handle_oauth_callback(code=code, state=state)
-    oauth_state = result["state"]
+    try:
+        result = handle_oauth_callback(code=code, state=state)
+        oauth_state = result["state"]
 
-    save_ebay_account(
-        owner_name=oauth_state.get("owner_name", "Unknown"),
-        role=oauth_state.get("role", "CLIENT"),
-        environment=oauth_state.get("environment", "production"),
-        marketplace_id=oauth_state.get("marketplace_id", "EBAY_US"),
-        token_data=result.get("token_data", {}),
-        profile=result.get("profile", {}),
-    )
+        save_ebay_account(
+            owner_name=oauth_state.get("owner_name", "Unknown"),
+            role=oauth_state.get("role", "CLIENT"),
+            environment=oauth_state.get("environment", "production"),
+            marketplace_id=oauth_state.get("marketplace_id", "EBAY_US"),
+            token_data=result.get("token_data", {}),
+            profile=result.get("profile", {}),
+        )
 
-    st.session_state["ebay_oauth_success"] = True
-    st.session_state["active_page"] = "Settings"
-    st.query_params.clear()
-    st.rerun()
+        st.session_state["ebay_oauth_success"] = True
+        st.session_state["active_page"] = "Settings"
+        st.query_params.clear()
+        st.rerun()
+    except Exception as exc:
+        st.error(f"eBay OAuth callback error: {exc}")
 
 
 def render_settings() -> None:
@@ -113,8 +118,31 @@ def render_ebay_connection(environment_options: list[str]) -> None:
             details.append(f"Store: {saved['store_name']}")
         if saved.get("ebay_user_id"):
             details.append(f"User ID: {saved['ebay_user_id']}")
+        if saved.get("environment"):
+            details.append(f"Environment: {saved['environment']}")
+        if saved.get("marketplace_id"):
+            details.append(f"Marketplace: {saved['marketplace_id']}")
+
         if details:
             st.caption(" | ".join(details))
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Disconnect eBay Account", use_container_width=True, type="secondary"):
+                disconnect_ebay_account(owner_name)
+                st.success("eBay account disconnected.")
+                st.rerun()
+
+        with col_b:
+            if st.button("Test eBay API Access", use_container_width=True):
+                try:
+                    response = call_ebay_api(owner_name, "GET", "/commerce/identity/v1/user/")
+                    if response.status_code == 200:
+                        st.success("eBay API access is working.")
+                    else:
+                        st.error(f"eBay API test failed: {response.status_code} {response.text}")
+                except Exception as exc:
+                    st.error(f"eBay API test failed: {exc}")
     else:
         st.info("No eBay account connected yet.")
 
@@ -143,8 +171,9 @@ def render_ebay_connection(environment_options: list[str]) -> None:
             environment=environment,
             marketplace_id=marketplace_id,
         )
+        button_label = "Reconnect eBay Account" if saved else f"Connect eBay {environment.title()} Account"
         st.link_button(
-            f"Connect eBay {environment.title()} Account",
+            button_label,
             oauth_url,
             use_container_width=True,
         )
@@ -171,28 +200,27 @@ def render_ceo_settings() -> None:
                 st.error("Enter a client name first.")
             else:
                 token_data = create_token(client_name)
-                st.success("Client token created.")
+                st.success(f"Token created for {client_name.strip()}")
                 st.code(token_data["token"])
 
-    st.divider()
-
     tokens = load_tokens()
-    active_tokens = [token for token in tokens if token.get("active") is True]
-
-    st.subheader("Active Client Tokens")
+    active_tokens = [item for item in tokens if item.get("active", True)]
 
     if not active_tokens:
-        st.info("No active client tokens yet.")
+        st.info("No active client tokens.")
         return
 
-    max_per_page = CEO_SETTINGS.get("max_tokens_per_page", 5)
-    total_pages = max(1, (len(active_tokens) + max_per_page - 1) // max_per_page)
+    if "token_page" not in st.session_state:
+        st.session_state.token_page = 0
 
-    if st.session_state.token_page > total_pages - 1:
+    per_page = 5
+    total_pages = max(1, (len(active_tokens) + per_page - 1) // per_page)
+
+    if st.session_state.token_page >= total_pages:
         st.session_state.token_page = total_pages - 1
 
-    start = st.session_state.token_page * max_per_page
-    end = start + max_per_page
+    start = st.session_state.token_page * per_page
+    end = start + per_page
     page_tokens = active_tokens[start:end]
 
     for item in page_tokens:
@@ -234,35 +262,3 @@ def render_ceo_settings() -> None:
 
 def render_client_settings() -> None:
     render_ebay_connection(["production"])
-
-def process_ebay_oauth_callback_if_present():
-    import streamlit as st
-    from core.ebay_oauth import handle_oauth_callback
-    from core.ebay_account_store import save_ebay_account
-
-    params = st.query_params
-
-    if "code" not in params or "state" not in params:
-        return None
-
-    try:
-        result = handle_oauth_callback(
-            code=params["code"],
-            state=params["state"],
-        )
-
-        save_ebay_account(
-            owner_name=result.get("owner_name", "default"),
-            role=result.get("role", "client"),
-            environment=result.get("environment", "production"),
-            token_data=result.get("token_data", {}),
-            ebay_user=result.get("ebay_user", {}),
-        )
-
-        st.query_params.clear()
-        st.success("eBay account connected successfully.")
-        return result
-
-    except Exception as e:
-        st.error(f"eBay OAuth callback error: {e}")
-        return None

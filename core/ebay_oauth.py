@@ -84,10 +84,9 @@ def verify_state(state: str) -> dict[str, Any]:
         raise ValueError("Invalid OAuth state signature.")
 
     payload = json.loads(_b64url_decode(raw_b64).decode("utf-8"))
-
     issued_at = int(payload.get("iat", 0))
     if int(time.time()) - issued_at > 60 * 30:
-        raise ValueError("OAuth state expired. Please connect eBay again.")
+        raise ValueError("OAuth state expired. Please click Connect eBay again.")
 
     return payload
 
@@ -99,14 +98,14 @@ def build_ebay_oauth_url(
     environment: str,
     marketplace_id: str = "EBAY_US",
 ) -> str:
-    env = (environment or "production").lower().strip()
-    config = get_ebay_config(env)
-
-    # Safety: non-CEO/client users are production-only.
     normalized_role = (role or "CLIENT").upper()
+    env = (environment or "production").lower().strip()
+
+    # Clients are production-only. CEO/admin may choose sandbox for testing.
     if normalized_role != "CEO":
         env = "production"
-        config = get_ebay_config("production")
+
+    config = get_ebay_config(env)
 
     state = _sign_state(
         {
@@ -132,7 +131,6 @@ def build_ebay_oauth_url(
 
 def exchange_code_for_tokens(code: str, environment: str) -> dict[str, Any]:
     config = get_ebay_config(environment)
-
     credentials = f"{config['client_id']}:{config['client_secret']}"
     encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
 
@@ -158,7 +156,6 @@ def exchange_code_for_tokens(code: str, environment: str) -> dict[str, Any]:
 
 def refresh_access_token(refresh_token: str, environment: str) -> dict[str, Any]:
     config = get_ebay_config(environment)
-
     credentials = f"{config['client_id']}:{config['client_secret']}"
     encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
 
@@ -195,7 +192,7 @@ def get_ebay_user_profile(access_token: str, environment: str) -> dict[str, Any]
     )
 
     if response.status_code != 200:
-        # Do not block token saving because profile lookup can fail for scope/account reasons.
+        # Do not fail the whole OAuth save if profile lookup is unavailable.
         return {
             "lookup_failed": True,
             "status_code": response.status_code,
@@ -206,15 +203,10 @@ def get_ebay_user_profile(access_token: str, environment: str) -> dict[str, Any]
 
 
 def handle_oauth_callback(code: str, state: str) -> dict[str, Any]:
-    if isinstance(code, list):
-        code = code[0]
-    if isinstance(state, list):
-        state = state[0]
-
-    state_payload = verify_state(str(state))
+    state_payload = verify_state(state)
     environment = state_payload["environment"]
 
-    token_data = exchange_code_for_tokens(str(code), environment)
+    token_data = exchange_code_for_tokens(code, environment)
     access_token = token_data.get("access_token")
 
     profile: dict[str, Any] = {}
