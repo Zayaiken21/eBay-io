@@ -9,7 +9,7 @@ from pages_ui.login import render_login
 from pages_ui.dashboard import render_dashboard
 from pages_ui.products import render_products
 from pages_ui.analytics import render_analytics
-from pages_ui.settings_page import render_settings
+from pages_ui.settings_page import render_settings, process_ebay_oauth_callback_if_present
 from pages_ui.ai_blogger import render_ai_blogger
 from pages_ui.orders import render_orders
 from pages_ui.catalog_pro import render_catalog_pro
@@ -24,6 +24,11 @@ st.set_page_config(
 
 load_css()
 init_session()
+
+# IMPORTANT:
+# eBay redirects back to a fresh Streamlit session. This must run BEFORE the
+# login gate so OAuth can save even when the user lands on the login page.
+process_ebay_oauth_callback_if_present()
 
 PAGES = {
     "Dashboard": render_dashboard,
