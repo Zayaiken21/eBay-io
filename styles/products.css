@@ -1,0 +1,82 @@
+/*
+  products.css
+  Companion stylesheet for products.py (Streamlit page).
+  Styles are injected via st.markdown() in _inject_css().
+  This file is kept for reference / external theming.
+*/
+
+/* ── Hero Banner ── */
+.app-hero {
+    background: linear-gradient(135deg, #0053a0 0%, #003f7d 100%);
+    color: white;
+    padding: 28px 32px;
+    border-radius: 12px;
+    margin-bottom: 28px;
+}
+.app-hero h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+.app-hero p  { opacity: 0.85; font-size: 15px; margin: 0; }
+
+/* ── Import Card ── */
+.import-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 20px;
+}
+
+/* ── Draft Card ── */
+.draft-card {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 12px;
+    transition: box-shadow 0.2s;
+}
+.draft-card:hover { box-shadow: 0 2px 12px rgba(0,83,160,0.10); }
+.draft-title { font-weight: 600; font-size: 15px; color: #1a202c; margin-bottom: 4px; }
+.draft-meta  { font-size: 12px; color: #718096; }
+
+/* ── Status Badges ── */
+.badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}
+.badge-draft    { background: #ebf8ff; color: #2b6cb0; }
+.badge-ready    { background: #f0fff4; color: #276749; }
+.badge-exported { background: #fffaf0; color: #744210; }
+
+/* ── Image Grid ── */
+.img-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 12px 0;
+}
+
+/* ── Section Labels ── */
+.section-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #718096;
+    margin: 24px 0 10px;
+}
+
+/* ── eBay Preview ── */
+.ebay-preview-wrap {
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 16px;
+}
+
+/* ── Confidence Indicators ── */
+.conf-high   { color: #276749; }
+.conf-medium { color: #744210; }
+.conf-low    { color: #9b2c2c; }
