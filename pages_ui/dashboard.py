@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import math
-import random
-from collections import Counter, defaultdict
-from dataclasses import dataclass
-from datetime import datetime, timedelta, time
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+import re
+from datetime import datetime, timedelta, time, timezone
+from html import escape
+from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -18,94 +17,37 @@ try:
         get_connected_ebay_label,
         get_latest_ebay_account,
     )
-except Exception:  # pragma: no cover - keeps dashboard from crashing during local setup
+except Exception:
     call_ebay_api = None
     get_connected_ebay_label = None
     get_latest_ebay_account = None
 
 
 EASTERN = ZoneInfo("America/New_York")
-UTC = ZoneInfo("UTC")
-MARKETPLACE_ID = "EBAY_US"
 PRODUCTS_PER_PAGE = 5
-MAX_TRACKED_PRODUCTS = 50
+MAX_PRODUCTS = 50
+
+DEFAULT_NICHES = [
+    "wireless earbuds",
+    "gaming keyboard",
+    "car phone mount",
+    "stanley tumbler",
+    "pokemon cards",
+    "portable blender",
+    "led strip lights",
+    "iphone case",
+    "air fryer accessories",
+    "men running shoes",
+]
 
 
-# Public-domain KJV scripture seed list.
-# The app rotates these by day of week and quote index. Add more verified KJV verses here
-# or load from Supabase/JSON later if you want a full 1000-verse local library.
-SCRIPTURE_BY_DAY = {
-    0: [
-        ("Genesis 1:3", "And God said, Let there be light: and there was light."),
-        ("Psalm 118:24", "This is the day which the LORD hath made; we will rejoice and be glad in it."),
-        ("Proverbs 3:5", "Trust in the LORD with all thine heart; and lean not unto thine own understanding."),
-        ("Matthew 5:16", "Let your light so shine before men, that they may see your good works, and glorify your Father which is in heaven."),
-        ("John 8:12", "I am the light of the world: he that followeth me shall not walk in darkness, but shall have the light of life."),
-        ("Romans 8:31", "If God be for us, who can be against us?"),
-        ("Philippians 4:13", "I can do all things through Christ which strengtheneth me."),
-    ],
-    1: [
-        ("Psalm 23:1", "The LORD is my shepherd; I shall not want."),
-        ("Isaiah 40:31", "But they that wait upon the LORD shall renew their strength; they shall mount up with wings as eagles."),
-        ("Matthew 6:33", "But seek ye first the kingdom of God, and his righteousness; and all these things shall be added unto you."),
-        ("John 14:6", "I am the way, the truth, and the life: no man cometh unto the Father, but by me."),
-        ("Romans 12:2", "Be ye transformed by the renewing of your mind."),
-        ("2 Timothy 1:7", "For God hath not given us the spirit of fear; but of power, and of love, and of a sound mind."),
-        ("James 1:5", "If any of you lack wisdom, let him ask of God."),
-    ],
-    2: [
-        ("Psalm 46:1", "God is our refuge and strength, a very present help in trouble."),
-        ("Psalm 119:105", "Thy word is a lamp unto my feet, and a light unto my path."),
-        ("Proverbs 16:3", "Commit thy works unto the LORD, and thy thoughts shall be established."),
-        ("Matthew 11:28", "Come unto me, all ye that labour and are heavy laden, and I will give you rest."),
-        ("John 15:5", "Without me ye can do nothing."),
-        ("Galatians 6:9", "Let us not be weary in well doing: for in due season we shall reap, if we faint not."),
-        ("Hebrews 11:1", "Now faith is the substance of things hoped for, the evidence of things not seen."),
-    ],
-    3: [
-        ("Joshua 1:9", "Be strong and of a good courage; be not afraid, neither be thou dismayed."),
-        ("Psalm 37:4", "Delight thyself also in the LORD; and he shall give thee the desires of thine heart."),
-        ("Proverbs 18:10", "The name of the LORD is a strong tower: the righteous runneth into it, and is safe."),
-        ("Matthew 7:7", "Ask, and it shall be given you; seek, and ye shall find."),
-        ("John 3:16", "For God so loved the world, that he gave his only begotten Son."),
-        ("Ephesians 2:8", "For by grace are ye saved through faith; and that not of yourselves: it is the gift of God."),
-        ("1 Peter 5:7", "Casting all your care upon him; for he careth for you."),
-    ],
-    4: [
-        ("Psalm 34:8", "O taste and see that the LORD is good: blessed is the man that trusteth in him."),
-        ("Psalm 55:22", "Cast thy burden upon the LORD, and he shall sustain thee."),
-        ("Proverbs 4:23", "Keep thy heart with all diligence; for out of it are the issues of life."),
-        ("Matthew 28:20", "Lo, I am with you alway, even unto the end of the world."),
-        ("John 10:10", "I am come that they might have life, and that they might have it more abundantly."),
-        ("Colossians 3:23", "And whatsoever ye do, do it heartily, as to the Lord, and not unto men."),
-        ("1 John 4:19", "We love him, because he first loved us."),
-    ],
-    5: [
-        ("Exodus 14:14", "The LORD shall fight for you, and ye shall hold your peace."),
-        ("Psalm 27:1", "The LORD is my light and my salvation; whom shall I fear?"),
-        ("Proverbs 3:6", "In all thy ways acknowledge him, and he shall direct thy paths."),
-        ("Mark 10:27", "With God all things are possible."),
-        ("John 16:33", "In the world ye shall have tribulation: but be of good cheer; I have overcome the world."),
-        ("Romans 15:13", "Now the God of hope fill you with all joy and peace in believing."),
-        ("Revelation 21:4", "And God shall wipe away all tears from their eyes."),
-    ],
-    6: [
-        ("Numbers 6:24", "The LORD bless thee, and keep thee."),
-        ("Psalm 91:1", "He that dwelleth in the secret place of the most High shall abide under the shadow of the Almighty."),
-        ("Proverbs 11:25", "The liberal soul shall be made fat: and he that watereth shall be watered also himself."),
-        ("Luke 1:37", "For with God nothing shall be impossible."),
-        ("John 14:27", "Peace I leave with you, my peace I give unto you."),
-        ("2 Corinthians 5:7", "For we walk by faith, not by sight."),
-        ("Hebrews 13:8", "Jesus Christ the same yesterday, and to day, and for ever."),
-    ],
-}
-
-
-@dataclass
-class DashboardWindow:
-    label: str
-    start_utc: datetime
-    end_utc: datetime
+def _load_css() -> None:
+    css_path = "pages_ui/dashboard.css"
+    try:
+        with open(css_path, "r", encoding="utf-8") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except FileNotFoundError:
+        pass
 
 
 def _owner_name() -> str:
@@ -117,560 +59,464 @@ def _owner_name() -> str:
     )
 
 
-def _is_ceo() -> bool:
-    role = str(st.session_state.get("role", "")).lower()
-    return bool(st.session_state.get("is_ceo")) or role == "ceo"
-
-
-def _load_dashboard_css() -> None:
-    paths = ["pages_ui/dashboard.css", "dashboard.css"]
-    for path in paths:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-                return
-        except FileNotFoundError:
-            continue
-
-
 def _now_est() -> datetime:
     return datetime.now(EASTERN)
 
 
-def _api_safe_utc(dt: datetime) -> datetime:
-    """eBay rejects future times; clamp to now minus a small safety buffer."""
-    safe_now = datetime.now(UTC) - timedelta(minutes=3)
-    dt_utc = dt.astimezone(UTC)
-    return min(dt_utc, safe_now)
-
-
-def _fmt_ebay_time(dt: datetime) -> str:
-    return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _windows() -> Tuple[DashboardWindow, DashboardWindow]:
-    now_est = _now_est()
-    end_utc = _api_safe_utc(now_est)
-    start_24_est = now_est - timedelta(hours=24)
-    start_90_est = now_est - timedelta(days=90)
-    return (
-        DashboardWindow("Last 24 Hours", _api_safe_utc(start_24_est), end_utc),
-        DashboardWindow("Last 90 Days", _api_safe_utc(start_90_est), end_utc),
-    )
-
-
-def _midnight_countdown() -> str:
+def _start_of_today_est() -> datetime:
     now = _now_est()
-    tomorrow_midnight = datetime.combine(now.date() + timedelta(days=1), time.min, tzinfo=EASTERN)
-    delta = tomorrow_midnight - now
-    hours, rem = divmod(int(delta.total_seconds()), 3600)
-    minutes, _ = divmod(rem, 60)
-    return f"{hours}h {minutes}m"
+    return datetime.combine(now.date(), time.min, tzinfo=EASTERN)
 
 
-def _quote_for_today() -> Tuple[str, str, str]:
-    now = _now_est()
-    verses = SCRIPTURE_BY_DAY[now.weekday()]
-    index = (now.timetuple().tm_yday + now.hour // 4) % len(verses)
-    ref, text = verses[index]
-    theme = ["gold", "blue", "purple", "green", "rose", "teal", "sunrise"][now.weekday()]
-    return ref, text, theme
+def _safe_utc(dt: datetime) -> str:
+    """eBay wants UTC. Clamp away from the future by 2 minutes."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=EASTERN)
+
+    utc_dt = dt.astimezone(timezone.utc)
+    max_end = datetime.now(timezone.utc) - timedelta(minutes=2)
+    if utc_dt > max_end:
+        utc_dt = max_end
+
+    return utc_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _get_connected_account(owner_name: str) -> Optional[Dict[str, Any]]:
-    if not get_latest_ebay_account:
-        return None
-    try:
-        account = get_latest_ebay_account(owner_name)
-        if account:
-            return account
-        if owner_name != "default":
-            return get_latest_ebay_account("default")
-    except Exception:
-        return None
-    return None
-
-
-def _connection_label(owner_name: str) -> str:
-    if get_connected_ebay_label:
-        try:
-            label = get_connected_ebay_label(owner_name)
-            if label and "No eBay" not in label:
-                return label
-        except Exception:
-            pass
-    account = _get_connected_account(owner_name)
-    if not account:
-        return "No connected eBay account"
-    return account.get("store_name") or account.get("ebay_username") or account.get("ebay_user_id") or "Connected eBay account"
-
-
-@st.cache_data(ttl=900, show_spinner=False)
-def _fetch_orders_cached(owner_name: str, start_iso: str, end_iso: str) -> List[Dict[str, Any]]:
-    if call_ebay_api is None:
-        raise RuntimeError("eBay API helper is not available.")
-
-    orders: List[Dict[str, Any]] = []
-    offset = 0
-    limit = 100
-
-    while offset < 1000:
-        params = {
-            "limit": str(limit),
-            "offset": str(offset),
-            "filter": f"creationdate:[{start_iso}..{end_iso}]",
-        }
-        resp = call_ebay_api(owner_name, "GET", "/sell/fulfillment/v1/order", params=params)
-
-        if isinstance(resp, dict):
-            data = resp
-        elif hasattr(resp, "json"):
-            if resp.status_code >= 400:
-                # Try fallback without filter once. Some seller accounts reject date filters depending on account state.
-                fallback = call_ebay_api(
-                    owner_name,
-                    "GET",
-                    "/sell/fulfillment/v1/order",
-                    params={"limit": str(limit), "offset": str(offset)},
-                )
-                data = fallback if isinstance(fallback, dict) else fallback.json()
-            else:
-                data = resp.json()
-        else:
-            data = {}
-
-        batch = data.get("orders", []) or data.get("orderSummaries", []) or []
-        orders.extend(batch)
-
-        total = int(data.get("total", len(orders)) or len(orders))
-        if not batch or len(orders) >= total:
-            break
-        offset += limit
-
-    return orders
-
-
-def _fetch_orders(owner_name: str, window: DashboardWindow) -> List[Dict[str, Any]]:
-    return _fetch_orders_cached(owner_name, _fmt_ebay_time(window.start_utc), _fmt_ebay_time(window.end_utc))
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def _fetch_inventory_cached(owner_name: str) -> List[Dict[str, Any]]:
-    if call_ebay_api is None:
-        return []
-    items: List[Dict[str, Any]] = []
-    offset = 0
-    limit = 100
-    while len(items) < MAX_TRACKED_PRODUCTS and offset < 500:
-        params = {"limit": str(limit), "offset": str(offset)}
-        resp = call_ebay_api(owner_name, "GET", "/sell/inventory/v1/inventory_item", params=params)
-        data = resp if isinstance(resp, dict) else resp.json()
-        batch = data.get("inventoryItems", []) or []
-        items.extend(batch)
-        if not batch or len(batch) < limit:
-            break
-        offset += limit
-    return items[:MAX_TRACKED_PRODUCTS]
-
-
-def _money_value(value: Any) -> float:
-    if not value:
-        return 0.0
-    if isinstance(value, dict):
-        try:
-            return float(value.get("value", 0) or 0)
-        except Exception:
-            return 0.0
+def _currency(value: Any) -> float:
     try:
         return float(value)
     except Exception:
         return 0.0
 
 
-def _order_total(order: Dict[str, Any]) -> float:
-    for key in ("pricingSummary", "total", "orderTotal"):
-        obj = order.get(key)
-        if isinstance(obj, dict):
-            if "total" in obj:
-                return _money_value(obj.get("total"))
-            if "value" in obj:
-                return _money_value(obj)
-    return sum(_money_value(li.get("lineItemCost")) for li in order.get("lineItems", []) or [])
+def _clean_keyword(value: str) -> str:
+    value = re.sub(r"[^a-zA-Z0-9\s\-&]", "", value or "")
+    value = re.sub(r"\s+", " ", value).strip()
+    return value[:80] or "trending products"
 
 
-def _parse_order_time(order: Dict[str, Any]) -> Optional[datetime]:
-    raw = order.get("creationDate") or order.get("createdDate") or order.get("orderCreationDate")
-    if not raw:
-        return None
+def _response_to_json(resp: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    if resp is None:
+        return None, "No response returned."
+
+    if isinstance(resp, dict):
+        return resp, None
+
+    status = getattr(resp, "status_code", None)
+    text = getattr(resp, "text", "")
+    if status and status >= 400:
+        return None, f"{status}: {text[:500]}"
+
     try:
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).astimezone(EASTERN)
+        return resp.json(), None
     except Exception:
-        return None
+        return None, text[:500] or "Response was not JSON."
 
 
-def _line_items(orders: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for order in orders:
-        order_id = order.get("orderId") or order.get("legacyOrderId") or "Unknown"
-        order_time = _parse_order_time(order)
-        order_status = order.get("orderFulfillmentStatus") or order.get("orderPaymentStatus") or order.get("status") or "Unknown"
-        for item in order.get("lineItems", []) or []:
-            qty = int(item.get("quantity", 1) or 1)
-            title = item.get("title") or item.get("sku") or "Unknown item"
-            sku = item.get("sku") or item.get("legacyItemId") or title[:48]
-            rows.append(
-                {
-                    "order_id": order_id,
-                    "created_est": order_time,
-                    "status": order_status,
-                    "title": title,
-                    "sku": sku,
-                    "qty": qty,
-                    "revenue": _money_value(item.get("lineItemCost")) * max(qty, 1),
-                    "niche": _infer_niche(title),
-                }
-            )
-    return rows
+def _api_get(owner_name: str, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    if call_ebay_api is None:
+        return None, "call_ebay_api is not available."
+
+    try:
+        resp = call_ebay_api(owner_name, "GET", endpoint, params=params or {})
+        return _response_to_json(resp)
+    except Exception as exc:
+        return None, str(exc)
 
 
-def _infer_niche(title: str) -> str:
-    words = [w.strip(" -_/|,.:;()[]{}").title() for w in str(title).split() if len(w.strip()) > 2]
-    stop = {"The", "And", "For", "With", "New", "Used", "Lot", "Pack", "Set", "Mens", "Womens"}
-    words = [w for w in words if w not in stop]
-    if not words:
-        return "General"
-    return " ".join(words[:2])
-
-
-def _product_stats(line_rows_90: List[Dict[str, Any]], line_rows_24: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    stats: Dict[str, Dict[str, Any]] = {}
-    for row in line_rows_90:
-        key = row["sku"] or row["title"]
-        item = stats.setdefault(
-            key,
-            {
-                "sku": row["sku"],
-                "title": row["title"],
-                "niche": row["niche"],
-                "qty_90": 0,
-                "revenue_90": 0.0,
-                "orders_90": set(),
-                "qty_24": 0,
-                "revenue_24": 0.0,
-            },
-        )
-        item["qty_90"] += row["qty"]
-        item["revenue_90"] += row["revenue"]
-        item["orders_90"].add(row["order_id"])
-
-    for row in line_rows_24:
-        key = row["sku"] or row["title"]
-        item = stats.setdefault(
-            key,
-            {
-                "sku": row["sku"],
-                "title": row["title"],
-                "niche": row["niche"],
-                "qty_90": 0,
-                "revenue_90": 0.0,
-                "orders_90": set(),
-                "qty_24": 0,
-                "revenue_24": 0.0,
-            },
-        )
-        item["qty_24"] += row["qty"]
-        item["revenue_24"] += row["revenue"]
-
-    products: List[Dict[str, Any]] = []
-    for item in stats.values():
-        days_active = 90
-        sell_rate = item["qty_90"] / days_active
-        success_score = min(100, round((item["qty_90"] * 2.0) + (item["revenue_90"] / 25.0) + (item["qty_24"] * 5.0), 1))
-        item["orders_90"] = len(item["orders_90"])
-        item["daily_sell_rate_90"] = round(sell_rate, 2)
-        item["success_score"] = success_score
-        products.append(item)
-
-    products.sort(key=lambda x: (x["qty_24"], x["qty_90"], x["revenue_90"]), reverse=True)
-    return products[:MAX_TRACKED_PRODUCTS]
-
-
-def _niche_stats(line_rows_90: List[Dict[str, Any]], line_rows_24: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    stats = defaultdict(lambda: {"qty_24": 0, "qty_90": 0, "revenue_24": 0.0, "revenue_90": 0.0, "orders": set()})
-    for row in line_rows_90:
-        s = stats[row["niche"]]
-        s["qty_90"] += row["qty"]
-        s["revenue_90"] += row["revenue"]
-        s["orders"].add(row["order_id"])
-    for row in line_rows_24:
-        s = stats[row["niche"]]
-        s["qty_24"] += row["qty"]
-        s["revenue_24"] += row["revenue"]
-
-    result = []
-    for niche, s in stats.items():
-        score = min(100, round((s["qty_24"] * 8) + (s["qty_90"] * 1.5) + (s["revenue_90"] / 40), 1))
-        result.append(
-            {
-                "niche": niche,
-                "qty_24": s["qty_24"],
-                "qty_90": s["qty_90"],
-                "revenue_24": s["revenue_24"],
-                "revenue_90": s["revenue_90"],
-                "success_score": score,
-                "daily_rate_90": round(s["qty_90"] / 90, 2),
-            }
-        )
-    result.sort(key=lambda x: (x["qty_24"], x["qty_90"], x["revenue_90"]), reverse=True)
-    return result[:12]
-
-
-def _render_scripture_border() -> None:
-    ref, text, theme = _quote_for_today()
-    st.markdown(
-        f"""
-        <div class="scripture-shell scripture-{theme}">
-            <div class="scripture-glow"></div>
-            <div class="scripture-content">
-                <span class="scripture-label">Today’s Word</span>
-                <strong>{ref}</strong>
-                <span>{text}</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+def _item_image(item: Dict[str, Any]) -> str:
+    image = item.get("image") or {}
+    return (
+        image.get("imageUrl")
+        or item.get("thumbnailImages", [{}])[0].get("imageUrl")
+        or "https://ir.ebaystatic.com/cr/v/c01/skin/image-placeholder.png"
     )
 
 
-def _metric(label: str, value: str, sub: str = "") -> str:
+def _item_price(item: Dict[str, Any]) -> float:
+    price = item.get("price") or {}
+    return _currency(price.get("value"))
+
+
+def _item_seller(item: Dict[str, Any]) -> str:
+    seller = item.get("seller") or {}
+    return seller.get("username") or seller.get("sellerUsername") or "eBay seller"
+
+
+def _item_category(item: Dict[str, Any], fallback: str) -> str:
+    path = item.get("categoryPath") or item.get("categoryName") or fallback
+    if isinstance(path, list):
+        return " > ".join([str(x) for x in path])
+    return str(path or fallback)
+
+
+def _normalize_active_items(data: Dict[str, Any], keyword: str) -> List[Dict[str, Any]]:
+    raw_items = data.get("itemSummaries") or data.get("itemSales") or data.get("items") or []
+    products: List[Dict[str, Any]] = []
+
+    for item in raw_items:
+        title = item.get("title") or item.get("itemTitle") or "Untitled eBay product"
+        price = _item_price(item)
+        shipping = item.get("shippingOptions", [{}])[0].get("shippingCost", {}) if item.get("shippingOptions") else {}
+        seller_feedback = (item.get("seller") or {}).get("feedbackScore") or 0
+        product_id = item.get("itemId") or item.get("legacyItemId") or item.get("itemHref") or title
+
+        products.append(
+            {
+                "id": str(product_id),
+                "title": title,
+                "keyword": keyword,
+                "category": _item_category(item, keyword),
+                "price": price,
+                "image": _item_image(item),
+                "url": item.get("itemWebUrl") or item.get("itemHref") or "",
+                "seller": _item_seller(item),
+                "condition": item.get("condition") or "Not shown",
+                "shipping": _currency(shipping.get("value")) if isinstance(shipping, dict) else 0.0,
+                "location": (item.get("itemLocation") or {}).get("country", "US"),
+                "feedback": int(seller_feedback or 0),
+                "source": "Browse API",
+            }
+        )
+
+    return products
+
+
+def _normalize_sales_items(data: Dict[str, Any], keyword: str) -> Dict[str, Dict[str, Any]]:
+    """Best-effort parser for Marketplace Insights item sales responses."""
+    raw_items = data.get("itemSales") or data.get("itemSummaries") or data.get("sales") or []
+    sales_by_title: Dict[str, Dict[str, Any]] = {}
+
+    for item in raw_items:
+        title = item.get("title") or item.get("itemTitle") or ""
+        if not title:
+            continue
+
+        quantity = (
+            item.get("totalSoldQuantity")
+            or item.get("soldQuantity")
+            or item.get("quantitySold")
+            or item.get("quantity")
+            or 0
+        )
+        amount = item.get("totalSalesAmount") or item.get("price") or {}
+        amount_value = amount.get("value") if isinstance(amount, dict) else amount
+
+        key = title.lower()[:80]
+        sales_by_title[key] = {
+            "sold_count": int(_currency(quantity)),
+            "sales_value": _currency(amount_value),
+            "source": "Marketplace Insights",
+        }
+
+    return sales_by_title
+
+
+@st.cache_data(ttl=60 * 30, show_spinner=False)
+def _fetch_market_products(
+    owner_name: str,
+    keyword_text: str,
+    marketplace_id: str,
+    reset_key: str,
+) -> Dict[str, Any]:
+    keywords = [_clean_keyword(k) for k in keyword_text.split(",") if _clean_keyword(k)]
+    keywords = keywords[:10] or DEFAULT_NICHES[:6]
+
+    all_products: List[Dict[str, Any]] = []
+    errors: List[str] = []
+
+    for keyword in keywords:
+        browse_params = {
+            "q": keyword,
+            "limit": 10,
+            "sort": "newlyListed",
+        }
+
+        data, err = _api_get(owner_name, "/buy/browse/v1/item_summary/search", browse_params)
+        if err:
+            errors.append(f"{keyword}: Browse search unavailable ({err})")
+            continue
+
+        products = _normalize_active_items(data or {}, keyword)
+
+        # Try true sold-history data if this eBay app has Marketplace Insights access.
+        end_est = min(_now_est(), _start_of_today_est() + timedelta(days=1) - timedelta(minutes=2))
+        start_24 = _start_of_today_est()
+        start_90 = end_est - timedelta(days=90)
+
+        insights_24, err_24 = _api_get(
+            owner_name,
+            "/buy/marketplace_insights/v1_beta/item_sales/search",
+            {
+                "q": keyword,
+                "limit": 50,
+                "filter": f"lastSoldDate:[{_safe_utc(start_24)}..{_safe_utc(end_est)}]",
+            },
+        )
+
+        insights_90, err_90 = _api_get(
+            owner_name,
+            "/buy/marketplace_insights/v1_beta/item_sales/search",
+            {
+                "q": keyword,
+                "limit": 50,
+                "filter": f"lastSoldDate:[{_safe_utc(start_90)}..{_safe_utc(end_est)}]",
+            },
+        )
+
+        sales24 = _normalize_sales_items(insights_24 or {}, keyword) if insights_24 else {}
+        sales90 = _normalize_sales_items(insights_90 or {}, keyword) if insights_90 else {}
+
+        for product in products:
+            key = product["title"].lower()[:80]
+            product["sold_24h"] = sales24.get(key, {}).get("sold_count", 0)
+            product["sold_90d"] = sales90.get(key, {}).get("sold_count", 0)
+
+            # Factual fallback: if Marketplace Insights is unavailable, do NOT fake sales.
+            product["sales_source"] = "eBay Marketplace Insights" if (sales24 or sales90) else "Active eBay marketplace listing"
+            product["success_rate"] = (
+                round((product["sold_24h"] / max(product["sold_90d"], 1)) * 100, 1)
+                if product["sold_90d"]
+                else None
+            )
+            # Ranking score prioritizes known sales; fallback ranks active comps by feedback/price.
+            product["score"] = (
+                product["sold_24h"] * 8
+                + product["sold_90d"] * 1.5
+                + min(product["feedback"], 10000) / 10000
+                + min(product["price"], 500) / 500
+            )
+            all_products.append(product)
+
+        if not insights_24 and err_24:
+            # Only store one concise note, not full technical API text.
+            if "marketplace_insights" not in " ".join(errors).lower():
+                errors.append("Marketplace Insights sold-history data is not available for this app/account yet; showing active marketplace products.")
+
+    deduped: Dict[str, Dict[str, Any]] = {}
+    for product in all_products:
+        key = product["id"] or product["title"].lower()
+        if key not in deduped or product["score"] > deduped[key]["score"]:
+            deduped[key] = product
+
+    ranked = sorted(deduped.values(), key=lambda p: p.get("score", 0), reverse=True)[:MAX_PRODUCTS]
+
+    return {
+        "products": ranked,
+        "errors": errors[:3],
+        "generated_at_est": _now_est().strftime("%b %d, %Y %I:%M %p EST"),
+        "reset_key": reset_key,
+    }
+
+
+def _product_card(product: Dict[str, Any], index: int) -> str:
+    title = escape(product.get("title") or "Untitled")
+    keyword = escape(product.get("keyword") or "market")
+    image = escape(product.get("image") or "")
+    url = escape(product.get("url") or "#")
+    seller = escape(product.get("seller") or "eBay seller")
+    condition = escape(product.get("condition") or "Not shown")
+    price = product.get("price") or 0
+    sold_24h = product.get("sold_24h")
+    sold_90d = product.get("sold_90d")
+    success = product.get("success_rate")
+
+    success_text = f"{success}%" if success is not None else "Needs Insights access"
+    sold_text = f"{sold_24h} / {sold_90d}" if sold_90d else "Active comp"
+
     return f"""
-    <div class="pro-metric">
-        <span>{label}</span>
-        <strong>{value}</strong>
-        <small>{sub}</small>
-    </div>
+    <article class="trend-card">
+        <div class="rank-pill">#{index}</div>
+        <a href="{url}" target="_blank" rel="noopener noreferrer">
+            <img src="{image}" class="trend-img" alt="{title}">
+        </a>
+        <div class="trend-content">
+            <div class="trend-keyword">{keyword}</div>
+            <h3>{title}</h3>
+            <div class="trend-price">${price:,.2f}</div>
+            <div class="trend-meta">
+                <span>{condition}</span>
+                <span>{seller}</span>
+            </div>
+            <div class="trend-stats">
+                <div><b>{sold_text}</b><small>24h / 90d sold</small></div>
+                <div><b>{success_text}</b><small>success rate</small></div>
+            </div>
+        </div>
+    </article>
     """
 
 
-def _render_metrics(orders_24: List[Dict[str, Any]], orders_90: List[Dict[str, Any]], products: List[Dict[str, Any]]) -> None:
-    revenue_24 = sum(_order_total(o) for o in orders_24)
-    revenue_90 = sum(_order_total(o) for o in orders_90)
-    sold_24 = sum(p.get("qty_24", 0) for p in products)
-    sold_90 = sum(p.get("qty_90", 0) for p in products)
-    avg_order = revenue_90 / max(len(orders_90), 1)
-
-    st.markdown(
-        f"""
-        <div class="pro-metric-grid">
-            {_metric("24h Revenue", f"${revenue_24:,.2f}", f"{len(orders_24)} orders")}
-            {_metric("90d Revenue", f"${revenue_90:,.2f}", f"{len(orders_90)} orders")}
-            {_metric("Items Sold", f"{sold_24}", f"{sold_90} in 90 days")}
-            {_metric("Avg Order", f"${avg_order:,.2f}", "90 day average")}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _render_charts(line_rows_90: List[Dict[str, Any]], niches: List[Dict[str, Any]]) -> None:
-    chart_left, chart_right = st.columns([1.2, 1])
-
-    with chart_left:
-        st.markdown('<div class="panel-title">Daily Sales Trend · 90 Days</div>', unsafe_allow_html=True)
-        if line_rows_90:
-            df = pd.DataFrame(line_rows_90)
-            df = df.dropna(subset=["created_est"])
-            if not df.empty:
-                df["date"] = df["created_est"].dt.date
-                trend = df.groupby("date", as_index=False).agg(qty=("qty", "sum"), revenue=("revenue", "sum"))
-                st.line_chart(trend.set_index("date")[["qty", "revenue"]], height=260)
-            else:
-                st.info("No dated order rows available yet.")
-        else:
-            st.info("No order data found for the selected 90-day window.")
-
-    with chart_right:
-        st.markdown('<div class="panel-title">Highest Selling Niches</div>', unsafe_allow_html=True)
-        if niches:
-            ndf = pd.DataFrame(niches[:8]).set_index("niche")
-            st.bar_chart(ndf[["qty_24", "qty_90"]], height=260)
-        else:
-            st.info("Niche data appears after orders are found.")
-
-
-def _render_product_carousel(products: List[Dict[str, Any]]) -> None:
-    st.markdown('<div class="panel-title">Tracked Products · Top 50 · 5 Per Page</div>', unsafe_allow_html=True)
-
+def _render_products(products: List[Dict[str, Any]]) -> None:
     if not products:
-        st.info("No sold products found yet. Once orders come in, your top products will appear here.")
+        st.info("No marketplace products returned yet. Try broader keywords like 'electronics, shoes, collectibles'.")
         return
 
     total_pages = max(1, math.ceil(len(products) / PRODUCTS_PER_PAGE))
-    page_key = "dashboard_product_page"
-    st.session_state.setdefault(page_key, 0)
+    page_key = "dashboard_market_page"
+    st.session_state.setdefault(page_key, 1)
+    st.session_state[page_key] = min(max(1, st.session_state[page_key]), total_pages)
 
-    nav_left, nav_mid, nav_right = st.columns([1, 2, 1])
-    with nav_left:
-        if st.button("← Previous", key="dash_prev_products", use_container_width=True):
-            st.session_state[page_key] = max(0, st.session_state[page_key] - 1)
-    with nav_mid:
-        st.markdown(
-            f"<div class='pager-label'>Page {st.session_state[page_key] + 1} of {total_pages} · {len(products)} tracked</div>",
-            unsafe_allow_html=True,
-        )
-    with nav_right:
-        if st.button("Next →", key="dash_next_products", use_container_width=True):
-            st.session_state[page_key] = min(total_pages - 1, st.session_state[page_key] + 1)
-
-    start = st.session_state[page_key] * PRODUCTS_PER_PAGE
+    start = (st.session_state[page_key] - 1) * PRODUCTS_PER_PAGE
     page_products = products[start : start + PRODUCTS_PER_PAGE]
 
-    cards = ""
-    for p in page_products:
-        cards += f"""
-        <div class="product-tile">
-            <div class="product-topline">
-                <span>{p.get("niche", "General")}</span>
-                <b>{p.get("success_score", 0)}%</b>
-            </div>
-            <h4>{p.get("title", "Untitled")}</h4>
-            <div class="product-mini-grid">
-                <div><strong>{p.get("qty_24", 0)}</strong><small>24h sold</small></div>
-                <div><strong>{p.get("qty_90", 0)}</strong><small>90d sold</small></div>
-                <div><strong>${p.get("revenue_90", 0):,.0f}</strong><small>90d sales</small></div>
-                <div><strong>{p.get("daily_sell_rate_90", 0)}</strong><small>/day</small></div>
-            </div>
-        </div>
-        """
+    cards = "".join(_product_card(p, start + i + 1) for i, p in enumerate(page_products))
+    st.markdown(f'<div class="trend-strip">{cards}</div>', unsafe_allow_html=True)
 
-    st.markdown(f"<div class='product-carousel'>{cards}</div>", unsafe_allow_html=True)
-
-
-def _render_niche_strip(niches: List[Dict[str, Any]]) -> None:
-    st.markdown('<div class="panel-title">Daily Highest Selling Niches · Compact Scroll</div>', unsafe_allow_html=True)
-    if not niches:
-        st.info("No niche data found yet.")
-        return
-    cards = ""
-    for n in niches:
-        cards += f"""
-        <div class="niche-pill">
-            <span>{n["niche"]}</span>
-            <strong>{n["qty_24"]}</strong>
-            <small>24h sold · {n["daily_rate_90"]}/day · {n["success_score"]}% score</small>
-        </div>
-        """
-    st.markdown(f"<div class='niche-strip'>{cards}</div>", unsafe_allow_html=True)
-
-
-def _render_requirements_box() -> None:
-    with st.expander("Requirements for these dashboard features"):
+    left, mid, right = st.columns([1, 2, 1])
+    with left:
+        if st.button("← Previous", use_container_width=True, disabled=st.session_state[page_key] <= 1):
+            st.session_state[page_key] -= 1
+            st.rerun()
+    with mid:
         st.markdown(
-            """
-            **Python packages**
-            ```bash
-            pip install pandas requests cryptography
-            ```
-
-            **eBay OAuth scopes needed**
-            - `https://api.ebay.com/oauth/api_scope`
-            - `https://api.ebay.com/oauth/api_scope/sell.fulfillment`
-            - `https://api.ebay.com/oauth/api_scope/sell.inventory`
-            - `https://api.ebay.com/oauth/api_scope/sell.analytics.readonly`
-            - `https://api.ebay.com/oauth/api_scope/sell.account`
-
-            **App files used**
-            - `core/ebay_account_store.py` must expose `call_ebay_api`
-            - `core/ebay_oauth.py` must refresh tokens without resending scopes
-            - Supabase table `ebay_accounts` stores encrypted OAuth tokens
-            - Settings page must show connected/disconnect/reconnect
-
-            **Data rule**
-            The dashboard UI uses Eastern Time. eBay API requests are sent in UTC and clamped so the end date is never in the future.
-            """
+            f"<div class='page-label'>Showing {start + 1}-{min(start + PRODUCTS_PER_PAGE, len(products))} of {len(products)} tracked products</div>",
+            unsafe_allow_html=True,
         )
+    with right:
+        if st.button("Next →", use_container_width=True, disabled=st.session_state[page_key] >= total_pages):
+            st.session_state[page_key] += 1
+            st.rerun()
+
+
+def _niche_summary(products: List[Dict[str, Any]]) -> pd.DataFrame:
+    if not products:
+        return pd.DataFrame(columns=["niche", "products", "sold_24h", "sold_90d", "avg_price", "success_rate"])
+
+    df = pd.DataFrame(products)
+    grouped = (
+        df.groupby("keyword", dropna=False)
+        .agg(
+            products=("title", "count"),
+            sold_24h=("sold_24h", "sum"),
+            sold_90d=("sold_90d", "sum"),
+            avg_price=("price", "mean"),
+        )
+        .reset_index()
+        .rename(columns={"keyword": "niche"})
+    )
+    grouped["success_rate"] = grouped.apply(
+        lambda r: round((r["sold_24h"] / r["sold_90d"]) * 100, 1) if r["sold_90d"] else None,
+        axis=1,
+    )
+    return grouped.sort_values(["sold_24h", "products"], ascending=False)
+
+
+def _render_charts(products: List[Dict[str, Any]]) -> None:
+    df = _niche_summary(products)
+    if df.empty:
+        return
+
+    st.markdown("<div class='section-title'>Highest-Signal Niches</div>", unsafe_allow_html=True)
+
+    chart_df = df.head(8).set_index("niche")[["products"]]
+    st.bar_chart(chart_df, height=230)
+
+    with st.expander("Niche details", expanded=False):
+        display = df.copy()
+        display["avg_price"] = display["avg_price"].map(lambda x: f"${x:,.2f}")
+        display["success_rate"] = display["success_rate"].map(lambda x: f"{x}%" if pd.notna(x) else "Requires Insights")
+        st.dataframe(display, hide_index=True, use_container_width=True)
+
+
+def _connected_label(owner_name: str) -> str:
+    if get_connected_ebay_label:
+        try:
+            return get_connected_ebay_label(owner_name)
+        except Exception:
+            pass
+    return "Connected eBay account"
 
 
 def render_dashboard() -> None:
-    _load_dashboard_css()
+    _load_css()
 
     owner_name = _owner_name()
-    connected_account = _get_connected_account(owner_name)
-    account_label = _connection_label(owner_name)
-    name = st.session_state.get("client_name") or st.session_state.get("username") or "User"
-
-    _render_scripture_border()
+    name = st.session_state.get("client_name") or "User"
 
     st.markdown(
         f"""
-        <section class="dashboard-hero-pro">
+        <section class="dash-hero">
             <div>
-                <span class="eyebrow">eBay IO Command Center</span>
-                <h1>Welcome back, {name}</h1>
-                <p>Live seller performance, niche movement, product velocity, and order intelligence in one production dashboard.</p>
+                <span class="eyebrow">Market Intelligence Dashboard</span>
+                <h1>Find eBay products moving right now.</h1>
+                <p>Research active marketplace products, niche demand signals, and sales-history availability in a compact SaaS workspace.</p>
             </div>
-            <div class="hero-status-card">
-                <span>Connected Seller</span>
-                <strong>{account_label}</strong>
-                <small>Daily product generation resets at 12:00 AM EST · next reset in {_midnight_countdown()}</small>
+            <div class="hero-chip">
+                <small>Connected account</small>
+                <strong>{escape(_connected_label(owner_name))}</strong>
             </div>
         </section>
         """,
         unsafe_allow_html=True,
     )
 
-    if not connected_account:
-        st.warning("Connect your eBay account in Settings to unlock live dashboard data.")
-        _render_requirements_box()
-        return
-
-    window_24, window_90 = _windows()
-
-    with st.spinner("Loading live eBay performance data..."):
-        try:
-            orders_24 = _fetch_orders(owner_name, window_24)
-            orders_90 = _fetch_orders(owner_name, window_90)
-        except Exception as exc:
-            st.error("Live eBay dashboard data could not load. Reconnect eBay in Settings, then refresh.")
-            with st.expander("Technical details"):
-                st.code(str(exc))
-            _render_requirements_box()
-            return
-
-    line_rows_24 = _line_items(orders_24)
-    line_rows_90 = _line_items(orders_90)
-    products = _product_stats(line_rows_90, line_rows_24)
-    niches = _niche_stats(line_rows_90, line_rows_24)
-
-    _render_metrics(orders_24, orders_90, products)
-    _render_charts(line_rows_90, niches)
-
-    st.markdown("<div class='dashboard-panel'>", unsafe_allow_html=True)
-    _render_niche_strip(niches)
+    st.markdown('<div class="control-panel">', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([3, 1, 1])
+    with c1:
+        keyword_text = st.text_input(
+            "Market keywords",
+            value=", ".join(DEFAULT_NICHES[:6]),
+            help="Comma-separated niches/products. The dashboard tracks up to 50 results and shows 5 at a time.",
+        )
+    with c2:
+        marketplace_id = st.selectbox("Marketplace", ["EBAY_US", "EBAY_GB", "EBAY_CA", "EBAY_AU"], index=0)
+    with c3:
+        if st.button("Refresh scan", use_container_width=True):
+            _fetch_market_products.clear()
+            st.session_state["dashboard_market_page"] = 1
+            st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("<div class='dashboard-panel'>", unsafe_allow_html=True)
-    _render_product_carousel(products)
-    st.markdown("</div>", unsafe_allow_html=True)
+    reset_key = _start_of_today_est().strftime("%Y-%m-%d")
+    with st.spinner("Scanning live eBay marketplace products..."):
+        result = _fetch_market_products(owner_name, keyword_text, marketplace_id, reset_key)
 
-    with st.expander("Recent live order sample"):
-        rows = []
-        for row in line_rows_90[:50]:
-            rows.append(
-                {
-                    "Order": row["order_id"],
-                    "Created EST": row["created_est"].strftime("%Y-%m-%d %I:%M %p") if row["created_est"] else "",
-                    "SKU": row["sku"],
-                    "Title": row["title"],
-                    "Qty": row["qty"],
-                    "Revenue": round(row["revenue"], 2),
-                    "Niche": row["niche"],
-                    "Status": row["status"],
-                }
+    products = result.get("products", [])
+
+    m1, m2, m3, m4 = st.columns(4)
+    niche_df = _niche_summary(products)
+    known_90 = sum(p.get("sold_90d") or 0 for p in products)
+    known_24 = sum(p.get("sold_24h") or 0 for p in products)
+    with m1:
+        st.metric("Tracked products", len(products))
+    with m2:
+        st.metric("Niches scanned", len(niche_df))
+    with m3:
+        st.metric("Known 24h sales", int(known_24))
+    with m4:
+        st.metric("Known 90d sales", int(known_90))
+
+    if result.get("errors"):
+        st.caption("Some sold-history signals require eBay Marketplace Insights approval. Active product discovery is still live.")
+
+    st.markdown(
+        f"""
+        <div class="freshness">
+            Daily research board resets at <b>12:00 AM EST</b>. Current board date: <b>{reset_key}</b>.
+            Last refreshed: <b>{escape(result.get("generated_at_est", ""))}</b>.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    _render_charts(products)
+    st.markdown("<div class='section-title'>Top Marketplace Product Signals</div>", unsafe_allow_html=True)
+    _render_products(products)
+
+    with st.expander("Export tracked products", expanded=False):
+        if products:
+            export_df = pd.DataFrame(products)
+            keep_cols = [
+                "title", "keyword", "category", "price", "seller", "condition",
+                "sold_24h", "sold_90d", "success_rate", "url", "sales_source",
+            ]
+            keep_cols = [c for c in keep_cols if c in export_df.columns]
+            st.download_button(
+                "Download CSV",
+                export_df[keep_cols].to_csv(index=False),
+                "ebay_market_products.csv",
+                "text/csv",
+                use_container_width=True,
             )
-        if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         else:
-            st.info("No recent line items found.")
-
-    _render_requirements_box()
+            st.caption("No products available to export.")
