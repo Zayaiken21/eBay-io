@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -24,22 +23,117 @@ EASTERN_TZ = ZoneInfo("America/New_York") if ZoneInfo else timezone(timedelta(ho
 def _css() -> str:
     return """
     <style>
+      .orders-shell { padding-top: 0.35rem; }
       .orders-hero {
-        background: linear-gradient(135deg, rgba(15,23,42,0.96), rgba(30,41,59,0.92));
-        border: 1px solid rgba(148,163,184,0.16);
-        border-radius: 26px;
-        padding: 1.1rem 1.25rem;
-        margin-bottom: 1rem;
-      }
-      .orders-hero h1 { margin: 0; color: #f8fafc; font-size: 2rem; letter-spacing: -0.03em; }
-      .orders-hero p { margin: 0.35rem 0 0 0; color: #cbd5e1; }
-      .soft-card {
-        background: rgba(15,23,42,0.72);
+        background: linear-gradient(135deg, rgba(6,10,20,0.98), rgba(15,23,42,0.95));
         border: 1px solid rgba(148,163,184,0.14);
-        border-radius: 20px;
-        padding: 1rem;
+        border-radius: 28px;
+        padding: 1.2rem 1.35rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 18px 50px rgba(0,0,0,0.18);
       }
-      .small-muted { color:#94a3b8; font-size:0.9rem; }
+      .orders-hero-top {
+        display:flex;
+        justify-content:space-between;
+        align-items:flex-start;
+        gap:1rem;
+      }
+      .orders-hero h1 {
+        margin: 0;
+        color: #f8fafc;
+        font-size: 2.15rem;
+        letter-spacing: -0.04em;
+      }
+      .orders-hero p {
+        margin: 0.4rem 0 0 0;
+        color: #cbd5e1;
+        max-width: 72ch;
+      }
+      .hero-pill {
+        display:inline-flex;
+        align-items:center;
+        gap:0.5rem;
+        padding:0.35rem 0.7rem;
+        border-radius:999px;
+        background:rgba(56,189,248,0.10);
+        border:1px solid rgba(56,189,248,0.18);
+        color:#bae6fd;
+        font-size:0.82rem;
+        font-weight:700;
+      }
+      .panel {
+        background: rgba(15,23,42,0.72);
+        border: 1px solid rgba(148,163,184,0.13);
+        border-radius: 22px;
+        padding: 1rem;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+      }
+      .metric {
+        background: rgba(2,6,23,0.55);
+        border: 1px solid rgba(148,163,184,0.12);
+        border-radius: 18px;
+        padding: 0.95rem 1rem;
+        min-height: 98px;
+      }
+      .metric .label {
+        color:#94a3b8;
+        font-size:0.76rem;
+        text-transform:uppercase;
+        letter-spacing:0.09em;
+        margin-bottom:0.35rem;
+      }
+      .metric .value {
+        color:#fff;
+        font-size:1.5rem;
+        font-weight:800;
+        line-height:1.05;
+      }
+      .metric .hint {
+        color:#94a3b8;
+        font-size:0.82rem;
+        margin-top:0.35rem;
+      }
+      .mini-badge {
+        display:inline-flex;
+        align-items:center;
+        padding:0.25rem 0.55rem;
+        border-radius:999px;
+        font-size:0.76rem;
+        font-weight:800;
+        background:rgba(56,189,248,0.10);
+        color:#bae6fd;
+        border:1px solid rgba(56,189,248,0.18);
+      }
+      .detail-line {
+        padding:0.22rem 0;
+        color:#e2e8f0;
+      }
+      .detail-label {
+        color:#94a3b8;
+        font-size:0.78rem;
+        text-transform:uppercase;
+        letter-spacing:0.08em;
+      }
+      .table-wrap table {
+        width:100%;
+        border-collapse: collapse;
+      }
+      .table-wrap th, .table-wrap td {
+        padding: 0.55rem 0.6rem;
+        border-bottom: 1px solid rgba(148,163,184,0.12);
+        text-align:left;
+        vertical-align: top;
+      }
+      .table-wrap th {
+        color:#cbd5e1;
+        font-size:0.78rem;
+        text-transform:uppercase;
+        letter-spacing:0.07em;
+      }
+      .table-wrap td {
+        color:#e5e7eb;
+        font-size:0.92rem;
+      }
     </style>
     """
 
@@ -61,10 +155,6 @@ def _owner_candidates() -> list[str]:
 
 
 def _resolve_connected_owner() -> tuple[str | None, dict | None, str]:
-    """
-    Finds the saved OAuth account without relying on the current Streamlit page/session.
-    This protects the app after eBay redirects users back to the login/root page.
-    """
     for owner in _owner_candidates():
         try:
             account = get_latest_ebay_account(owner)
@@ -99,10 +189,6 @@ def _fmt_ebay_utc(dt: datetime) -> str:
 
 
 def _safe_est_bounds(start_day: date, end_day: date) -> tuple[datetime, datetime]:
-    """
-    User picks EST/ET dates. eBay requires UTC.
-    We clamp the end time to now - 5 minutes so eBay never receives a future date.
-    """
     if end_day < start_day:
         start_day, end_day = end_day, start_day
 
@@ -130,13 +216,8 @@ def _chunk_range(start_utc: datetime, end_utc: datetime, max_days: int = MAX_CHU
         cur = nxt + timedelta(seconds=1)
 
 
-def _extract_tracking(line_item: dict[str, Any], order: dict[str, Any]) -> str:
+def _extract_tracking(order: dict[str, Any]) -> str:
     values: list[str] = []
-
-    for fulfillment in order.get("fulfillmentStartInstructions", []) or []:
-        for shipment in fulfillment.get("shippingStep", {}).get("shipTo", {}).get("contactAddress", []) or []:
-            if shipment:
-                values.append(str(shipment))
 
     for fulfillment in order.get("shippingFulfillments", []) or []:
         tracking = fulfillment.get("shipmentTrackingNumber")
@@ -173,7 +254,7 @@ def _order_rows(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "fulfillment_status": order.get("orderFulfillmentStatus", ""),
                     "cancel_status": (order.get("cancelStatus", {}) or {}).get("cancelState", ""),
                     "ship_by": "",
-                    "tracking": _extract_tracking({}, order),
+                    "tracking": _extract_tracking(order),
                     "raw": order,
                 }
             )
@@ -196,7 +277,7 @@ def _order_rows(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "fulfillment_status": item.get("lineItemFulfillmentStatus") or order.get("orderFulfillmentStatus", ""),
                     "cancel_status": (order.get("cancelStatus", {}) or {}).get("cancelState", ""),
                     "ship_by": instructions.get("shipByDate", ""),
-                    "tracking": _extract_tracking(item, order),
+                    "tracking": _extract_tracking(order),
                     "raw": order,
                 }
             )
@@ -227,7 +308,6 @@ def _fetch_orders(owner_name: str, start_utc: datetime, end_utc: datetime, fulfi
             }
 
             if fulfillment_status != "All":
-                # eBay can be picky here, so if this fails we retry this chunk without the status filter.
                 params["filter"] += f",orderfulfillmentstatus:{{{fulfillment_status}}}"
 
             try:
@@ -235,7 +315,6 @@ def _fetch_orders(owner_name: str, start_utc: datetime, end_utc: datetime, fulfi
             except RuntimeError as first_error:
                 if fulfillment_status != "All":
                     warnings.append("Status filter was rejected by eBay, so results were loaded by date only.")
-                    params.pop("filter", None)
                     params = {
                         "limit": PAGE_SIZE,
                         "offset": offset,
@@ -254,7 +333,6 @@ def _fetch_orders(owner_name: str, start_utc: datetime, end_utc: datetime, fulfi
 
             offset += PAGE_SIZE
 
-    # De-dupe by order id but preserve order.
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []
     for order in all_orders:
@@ -267,6 +345,16 @@ def _fetch_orders(owner_name: str, start_utc: datetime, end_utc: datetime, fulfi
     return unique, warnings
 
 
+def _metric(label: str, value: str, hint: str = "") -> str:
+    return f"""
+    <div class="metric">
+      <div class="label">{label}</div>
+      <div class="value">{value}</div>
+      <div class="hint">{hint}</div>
+    </div>
+    """
+
+
 def _render_metrics(df: pd.DataFrame):
     total_orders = df["order_id"].nunique() if not df.empty else 0
     total_items = pd.to_numeric(df.get("quantity", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
@@ -276,19 +364,41 @@ def _render_metrics(df: pd.DataFrame):
     ] if not df.empty else df
 
     a, b, c, d = st.columns(4)
-    a.metric("Orders", f"{total_orders:,}")
-    b.metric("Items", f"{int(total_items):,}")
-    c.metric("Sales", f"${total_sales:,.2f}")
-    d.metric("Open / Unfulfilled", f"{len(open_rows):,}")
+    a.markdown(_metric("Orders", f"{total_orders:,}", "Unique order IDs"), unsafe_allow_html=True)
+    b.markdown(_metric("Items", f"{int(total_items):,}", "Line items"), unsafe_allow_html=True)
+    c.markdown(_metric("Sales", f"${total_sales:,.2f}", "Shown results"), unsafe_allow_html=True)
+    d.markdown(_metric("Open / Unfulfilled", f"{len(open_rows):,}", "Needs attention"), unsafe_allow_html=True)
+
+
+def _tag(text: str) -> str:
+    txt = (text or "").upper()
+    if txt in {"FULFILLED", "SHIPPED"}:
+        kind = "green"
+    elif txt in {"READY", "PENDING", "NOT_STARTED"}:
+        kind = "yellow"
+    elif txt in {"CANCELLED", "ISSUE"}:
+        kind = "red"
+    else:
+        kind = "blue"
+    palette = {"green": "#4ade80", "yellow": "#f59e0b", "red": "#fb7185", "blue": "#38bdf8"}
+    c = palette[kind]
+    return f"<span class='mini-badge' style='background:{c};color:#0b1220;'>{text}</span>"
 
 
 def render_orders():
     st.markdown(_css(), unsafe_allow_html=True)
     st.markdown(
         """
-        <div class="orders-hero">
-          <h1>Orders Command Board</h1>
-          <p>Live eBay orders from your connected OAuth seller account. Dates are selected in Eastern Time and safely converted for eBay.</p>
+        <div class="orders-shell">
+          <div class="orders-hero">
+            <div class="orders-hero-top">
+              <div>
+                <h1>Orders Command Board</h1>
+                <p>Live eBay orders from your connected seller account. Choose an Eastern Time date range, load only what you need, and work the queue from a clean SaaS-style board.</p>
+              </div>
+              <div class="hero-pill">Live eBay Sync</div>
+            </div>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -297,12 +407,10 @@ def render_orders():
     owner_name, account, label = _resolve_connected_owner()
     if not owner_name or not account:
         st.warning("No connected eBay account found. Go to Settings and connect eBay first.")
-        if st.button("Go to Settings", use_container_width=False):
+        if st.button("Go to Settings"):
             st.session_state.active_page = "Settings"
             st.rerun()
         return
-
-    st.success(f"Using connected eBay account: {label}")
 
     today_est = datetime.now(EASTERN_TZ).date()
     default_start = today_est - timedelta(days=30)
@@ -317,15 +425,15 @@ def render_orders():
 
         if preset == "Last 7 days":
             start_day, end_day = today_est - timedelta(days=7), today_est
-        elif preset == "Last 30 days":
-            start_day, end_day = today_est - timedelta(days=30), today_est
         elif preset == "Last 90 days":
             start_day, end_day = today_est - timedelta(days=90), today_est
         elif preset == "Year to date":
             start_day, end_day = date(today_est.year, 1, 1), today_est
-        else:
+        elif preset == "Custom":
             start_day = st.date_input("Start date (EST)", value=default_start)
             end_day = st.date_input("End date (EST)", value=today_est)
+        else:
+            start_day, end_day = today_est - timedelta(days=30), today_est
 
         fulfillment_status = st.selectbox(
             "Fulfillment status",
@@ -337,21 +445,25 @@ def render_orders():
 
     start_utc, end_utc = _safe_est_bounds(start_day, end_day)
 
+    st.caption(f"Showing {start_day:%b %d, %Y} through {end_day:%b %d, %Y} Eastern Time.")
+    st.info(f"Connected account: {label}")
+
     cache_key = f"ebay_orders_{owner_name}_{start_utc.isoformat()}_{end_utc.isoformat()}_{fulfillment_status}"
     if refresh:
         st.session_state.pop(cache_key, None)
-
-    with st.caption(f"Showing {start_day:%b %d, %Y} through {end_day:%b %d, %Y} Eastern Time."):
-        pass
 
     if cache_key not in st.session_state:
         with st.spinner("Loading live eBay orders..."):
             try:
                 orders, warnings = _fetch_orders(owner_name, start_utc, end_utc, fulfillment_status)
-                st.session_state[cache_key] = {"orders": orders, "warnings": warnings, "synced_at": datetime.now(timezone.utc).isoformat()}
+                st.session_state[cache_key] = {
+                    "orders": orders,
+                    "warnings": warnings,
+                    "synced_at": datetime.now(timezone.utc).isoformat(),
+                }
             except Exception as exc:
                 st.error("eBay rejected the order query or the saved connection needs reconnecting.")
-                st.info("Use Last 30 days, confirm your eBay account is connected in Settings, then refresh.")
+                st.info("Use a recent date range, confirm the eBay account is connected in Settings, then refresh.")
                 with st.expander("Technical details", expanded=False):
                     st.write(str(exc))
                     st.write("Start UTC:", _fmt_ebay_utc(start_utc))
@@ -381,54 +493,93 @@ def render_orders():
 
     _render_metrics(df)
 
-    display_columns = [
-        "created",
-        "order_id",
-        "buyer",
-        "sku",
-        "title",
-        "quantity",
-        "total",
-        "payment_status",
-        "fulfillment_status",
-        "ship_by",
-        "tracking",
-    ]
+    left, right = st.columns([0.68, 0.32], gap="large")
 
-    st.dataframe(
-        df[display_columns],
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "created": "Created",
-            "order_id": "Order ID",
-            "buyer": "Buyer",
-            "sku": "SKU",
-            "title": "Item",
-            "quantity": "Qty",
-            "total": st.column_config.NumberColumn("Total", format="$%.2f"),
-            "payment_status": "Payment",
-            "fulfillment_status": "Fulfillment",
-            "ship_by": "Ship by",
-            "tracking": "Tracking",
-        },
-    )
+    with left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.subheader("Order stream")
 
-    export_df = df.drop(columns=["raw"], errors="ignore")
-    st.download_button(
-        "Download orders CSV",
-        data=export_df.to_csv(index=False).encode("utf-8"),
-        file_name=f"ebay_orders_{start_day}_to_{end_day}_est.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
+        display = df.copy()
+        display["status_badge"] = display["fulfillment_status"].apply(_tag)
+        table = display[
+            ["created", "order_id", "buyer", "sku", "title", "quantity", "total", "payment_status", "fulfillment_status", "ship_by", "tracking"]
+        ].copy()
+        table.rename(
+            columns={
+                "created": "Created",
+                "order_id": "Order ID",
+                "buyer": "Buyer",
+                "sku": "SKU",
+                "title": "Item",
+                "quantity": "Qty",
+                "total": "Total",
+                "payment_status": "Payment",
+                "fulfillment_status": "Fulfillment",
+                "ship_by": "Ship by",
+                "tracking": "Tracking",
+            },
+            inplace=True,
+        )
 
-    with st.expander("Order JSON inspector", expanded=False):
-        order_ids = df["order_id"].dropna().astype(str).unique().tolist()
-        if order_ids:
-            selected = st.selectbox("Select order", order_ids)
-            raw = df[df["order_id"].astype(str) == selected].iloc[0].get("raw", {})
-            st.json(raw)
+        st.dataframe(
+            table,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Total": st.column_config.NumberColumn("Total", format="$%.2f"),
+            },
+        )
+
+        st.download_button(
+            "Download orders CSV",
+            data=df.drop(columns=["raw"], errors="ignore").to_csv(index=False).encode("utf-8"),
+            file_name=f"ebay_orders_{start_day}_to_{end_day}_est.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.subheader("Selected order")
+
+        if not df.empty:
+            selected_key = st.selectbox(
+                "Choose order",
+                df.index.tolist(),
+                format_func=lambda i: str(df.loc[i, "order_id"] or df.loc[i, "sku"] or f"row {i}"),
+            )
+            row = df.loc[selected_key]
+
+            st.markdown(f"<div class='detail-line'><div class='detail-label'>Order ID</div><div>{row['order_id'] or '—'}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='detail-line'><div class='detail-label'>Buyer</div><div>{row['buyer'] or '—'}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='detail-line'><div class='detail-label'>Item</div><div>{row['title'] or '—'}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='detail-line'><div class='detail-label'>SKU</div><div>{row['sku'] or '—'}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='detail-line'><div class='detail-label'>Fulfillment</div><div>{row['fulfillment_status'] or '—'}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='detail-line'><div class='detail-label'>Payment</div><div>{row['payment_status'] or '—'}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='detail-line'><div class='detail-label'>Ship by</div><div>{row['ship_by'] or '—'}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='detail-line'><div class='detail-label'>Tracking</div><div>{row['tracking'] or 'Pending'}</div></div>", unsafe_allow_html=True)
+        else:
+            st.info("No selected order.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.subheader("Actions")
+        st.button("Mark Purchased", use_container_width=True)
+        st.button("Add Tracking", use_container_width=True)
+        st.button("Mark Shipped", use_container_width=True)
+        st.button("Flag Issue", use_container_width=True)
+        st.button("Archive", use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with st.expander("Debug details", expanded=False):
+        st.write("Synced at:", payload.get("synced_at"))
+        st.write("Loaded orders:", len(payload.get("orders", [])))
+        st.write("Date range UTC:", _fmt_ebay_utc(start_utc), "to", _fmt_ebay_utc(end_utc))
+        st.write("Account owner:", owner_name)
+        st.json({"fulfillment_status": fulfillment_status, "search": search, "presets": preset})
 
 
 if __name__ == "__main__":
