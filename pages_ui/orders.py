@@ -13,6 +13,7 @@ except Exception:  # pragma: no cover
     ZoneInfo = None
 
 from core.ebay_account_store import call_ebay_api, get_connected_ebay_label, get_latest_ebay_account
+from core.styles import load_css
 
 
 PAGE_SIZE = 100
@@ -23,111 +24,113 @@ EASTERN_TZ = ZoneInfo("America/New_York") if ZoneInfo else timezone(timedelta(ho
 def _css() -> str:
     return """
     <style>
-      .orders-shell { padding-top: 0.25rem; }
-      .orders-hero {
-        background: radial-gradient(circle at top left, rgba(56,189,248,0.16), transparent 30%),
-                    linear-gradient(135deg, rgba(6,10,20,0.98), rgba(15,23,42,0.95));
-        border: 1px solid rgba(148,163,184,0.14);
-        border-radius: 28px;
-        padding: 1.25rem 1.35rem;
-        margin-bottom: 1rem;
-        box-shadow: 0 18px 50px rgba(0,0,0,0.18);
-      }
-      .orders-hero-top {
-        display:flex;
-        justify-content:space-between;
-        align-items:flex-start;
-        gap:1rem;
-      }
-      .orders-hero h1 {
-        margin: 0;
-        color: #f8fafc;
-        font-size: 2.2rem;
-        letter-spacing: -0.05em;
-      }
-      .orders-hero p {
-        margin: 0.45rem 0 0 0;
-        color: #cbd5e1;
-        max-width: 84ch;
-        line-height: 1.5;
-      }
-      .hero-pill {
-        display:inline-flex;
-        align-items:center;
-        gap:0.5rem;
-        padding:0.35rem 0.75rem;
-        border-radius:999px;
-        background:rgba(56,189,248,0.10);
-        border:1px solid rgba(56,189,248,0.18);
-        color:#bae6fd;
-        font-size:0.82rem;
-        font-weight:700;
-        white-space: nowrap;
-      }
-      .panel {
-        background: rgba(15,23,42,0.72);
-        border: 1px solid rgba(148,163,184,0.13);
-        border-radius: 22px;
-        padding: 1rem;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.12);
-      }
-      .metric {
-        background: rgba(2,6,23,0.55);
-        border: 1px solid rgba(148,163,184,0.12);
-        border-radius: 18px;
-        padding: 0.95rem 1rem;
-        min-height: 98px;
-      }
-      .metric .label {
-        color:#94a3b8;
-        font-size:0.76rem;
-        text-transform:uppercase;
-        letter-spacing:0.09em;
-        margin-bottom:0.35rem;
-      }
-      .metric .value {
-        color:#fff;
-        font-size:1.5rem;
-        font-weight:800;
-        line-height:1.05;
-      }
-      .metric .hint {
-        color:#94a3b8;
-        font-size:0.82rem;
-        margin-top:0.35rem;
-      }
-      .mini-badge {
-        display:inline-flex;
-        align-items:center;
-        padding:0.25rem 0.55rem;
-        border-radius:999px;
-        font-size:0.76rem;
-        font-weight:800;
-        background:rgba(56,189,248,0.10);
-        color:#bae6fd;
-        border:1px solid rgba(56,189,248,0.18);
-      }
-      .detail-line {
-        padding:0.28rem 0;
-        color:#e2e8f0;
-      }
-      .detail-label {
-        color:#94a3b8;
-        font-size:0.78rem;
-        text-transform:uppercase;
-        letter-spacing:0.08em;
-      }
-      .section-title {
-        color:#f8fafc;
-        font-size:1.05rem;
-        font-weight:800;
-        letter-spacing:-0.02em;
-        margin-bottom:0.5rem;
-      }
-      .subtle {
-        color:#94a3b8;
-        font-size:0.88rem;
-      }
+    .orders-page .orders-shell { padding-top: 0.35rem; }
+    .orders-page .orders-hero {
+      background: radial-gradient(circle at top left, rgba(56,189,248,0.16), transparent 30%),
+                  linear-gradient(135deg, rgba(6,10,20,0.98), rgba(15,23,42,0.95));
+      border: 1px solid rgba(148,163,184,0.16);
+      border-radius: 28px;
+      padding: 1.25rem 1.35rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 18px 50px rgba(0,0,0,0.18);
+    }
+    .orders-page .orders-hero-top {
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:1rem;
+    }
+    .orders-page .orders-hero h1 {
+      margin: 0;
+      color: #f8fafc;
+      font-size: 2.2rem;
+      letter-spacing: -0.05em;
+    }
+    .orders-page .orders-hero p {
+      margin: 0.45rem 0 0 0;
+      color: #cbd5e1;
+      max-width: 84ch;
+      line-height: 1.5;
+    }
+    .orders-page .hero-pill {
+      display:inline-flex;
+      align-items:center;
+      gap:0.5rem;
+      padding:0.35rem 0.75rem;
+      border-radius:999px;
+      background:rgba(56,189,248,0.10);
+      border:1px solid rgba(56,189,248,0.18);
+      color:#bae6fd;
+      font-size:0.82rem;
+      font-weight:700;
+      white-space: nowrap;
+    }
+    .orders-page .panel {
+      background: rgba(15,23,42,0.82);
+      border: 1px solid rgba(148,163,184,0.16);
+      border-radius: 22px;
+      padding: 1rem;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+    }
+    .orders-page .metric {
+      background: rgba(2,6,23,0.72);
+      border: 1px solid rgba(148,163,184,0.12);
+      border-radius: 18px;
+      padding: 0.95rem 1rem;
+      min-height: 98px;
+    }
+    .orders-page .metric .label {
+      color:#94a3b8;
+      font-size:0.76rem;
+      text-transform:uppercase;
+      letter-spacing:0.09em;
+      margin-bottom:0.35rem;
+    }
+    .orders-page .metric .value {
+      color:#f8fafc;
+      font-size:1.5rem;
+      font-weight:800;
+      line-height:1.05;
+    }
+    .orders-page .metric .hint {
+      color:#94a3b8;
+      font-size:0.82rem;
+      margin-top:0.35rem;
+    }
+    .orders-page .mini-badge {
+      display:inline-flex;
+      align-items:center;
+      padding:0.25rem 0.55rem;
+      border-radius:999px;
+      font-size:0.76rem;
+      font-weight:800;
+      background:rgba(56,189,248,0.12);
+      color:#e0f2fe;
+      border:1px solid rgba(56,189,248,0.18);
+    }
+    .orders-page .detail-line {
+      padding:0.28rem 0;
+      color:#f1f5f9;
+    }
+    .orders-page .detail-label {
+      color:#94a3b8;
+      font-size:0.78rem;
+      text-transform:uppercase;
+      letter-spacing:0.08em;
+    }
+    .orders-page .section-title {
+      color:#f8fafc;
+      font-size:1.05rem;
+      font-weight:800;
+      letter-spacing:-0.02em;
+      margin-bottom:0.5rem;
+    }
+    .orders-page .subtle { color:#cbd5e1; }
+    .orders-page .stDataFrame, .orders-page [data-testid="stDataFrame"] {
+      background: rgba(15, 23, 42, 0.82);
+      color: #f8fafc;
+    }
+    .orders-page .stDataFrame * { color: inherit; }
     </style>
     """
 
@@ -141,11 +144,11 @@ def _owner_candidates() -> list[str]:
         st.session_state.get("client_name"),
         "default",
     ]
-    clean: list[str] = []
+    out: list[str] = []
     for item in candidates:
-        if item and str(item) not in clean:
-            clean.append(str(item))
-    return clean
+        if item and str(item) not in out:
+            out.append(str(item))
+    return out
 
 
 def _resolve_connected_owner() -> tuple[str | None, dict | None, str]:
@@ -178,27 +181,21 @@ def _money_value(value: Any) -> float:
 
 
 def _fmt_ebay_utc(dt: datetime) -> str:
-    dt = dt.astimezone(timezone.utc).replace(microsecond=0)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return dt.astimezone(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _safe_est_bounds(start_day: date, end_day: date) -> tuple[datetime, datetime]:
     if end_day < start_day:
         start_day, end_day = end_day, start_day
-
     start_est = datetime.combine(start_day, time.min).replace(tzinfo=EASTERN_TZ)
     end_est = datetime.combine(end_day, time(23, 59, 59)).replace(tzinfo=EASTERN_TZ)
-
     start_utc = start_est.astimezone(timezone.utc)
     end_utc = end_est.astimezone(timezone.utc)
-
     safe_now_utc = datetime.now(timezone.utc) - timedelta(minutes=5)
     if end_utc > safe_now_utc:
         end_utc = safe_now_utc
-
     if start_utc >= end_utc:
         start_utc = end_utc - timedelta(days=1)
-
     return start_utc, end_utc
 
 
@@ -237,20 +234,14 @@ def _workflow_stage(fulfillment_status: str, payment_status: str, tracking: str,
 
 
 def _month_key(value: str) -> str:
-    try:
-        if not value:
-            return ""
-        dt = pd.to_datetime(value, utc=True, errors="coerce")
-        if pd.isna(dt):
-            return ""
-        return dt.strftime("%Y-%m")
-    except Exception:
+    dt = pd.to_datetime(value, utc=True, errors="coerce")
+    if pd.isna(dt):
         return ""
+    return dt.strftime("%Y-%m")
 
 
 def _order_rows(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-
     for order in orders:
         buyer = order.get("buyer", {}) or {}
         pricing = order.get("pricingSummary", {}) or {}
@@ -303,8 +294,6 @@ def _order_rows(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
             stage = _workflow_stage(fulfillment_status, payment_status, base_tracking, cancel_status)
             cost_basis = 0.0
             fees = 0.0
-            net_profit = round(item_total - cost_basis - fees, 2)
-
             rows.append(
                 {
                     "order_id": order.get("orderId", ""),
@@ -317,7 +306,7 @@ def _order_rows(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "total": item_total,
                     "cost_basis": cost_basis,
                     "fees": fees,
-                    "net_profit": net_profit,
+                    "net_profit": round(item_total - cost_basis - fees, 2),
                     "payment_status": payment_status,
                     "fulfillment_status": fulfillment_status,
                     "cancel_status": cancel_status,
@@ -335,7 +324,6 @@ def _order_rows(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "raw": order,
                 }
             )
-
     return rows
 
 
@@ -360,7 +348,6 @@ def _fetch_orders(owner_name: str, start_utc: datetime, end_utc: datetime, fulfi
                 "offset": offset,
                 "filter": f"creationdate:[{_fmt_ebay_utc(chunk_start)}..{_fmt_ebay_utc(chunk_end)}]",
             }
-
             if fulfillment_status != "All":
                 params["filter"] += f",orderfulfillmentstatus:{{{fulfillment_status}}}"
 
@@ -413,7 +400,6 @@ def _render_metrics(df: pd.DataFrame):
     total_items = pd.to_numeric(df.get("quantity", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
     total_sales = pd.to_numeric(df.get("total", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
     total_profit = pd.to_numeric(df.get("net_profit", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
-    open_rows = df[df.get("workflow_stage", pd.Series(dtype=str)).astype(str).isin(["TO_BUY", "BUYING", "WAITING_TRACKING"])]
 
     a, b, c, d = st.columns(4)
     a.markdown(_metric("Orders", f"{total_orders:,}", "Unique order IDs"), unsafe_allow_html=True)
@@ -431,18 +417,16 @@ def _render_metrics(df: pd.DataFrame):
 def _tag(text: str) -> str:
     txt = (text or "").upper()
     if txt in {"SHIPPED", "FULFILLED"}:
-        kind = "green"
+        bg = "#4ade80"
     elif txt in {"TO_BUY", "WAITING_TRACKING"}:
-        kind = "yellow"
-    elif txt in {"BUYING"}:
-        kind = "blue"
+        bg = "#f59e0b"
+    elif txt == "BUYING":
+        bg = "#38bdf8"
     elif txt in {"CANCELLED", "ISSUE"}:
-        kind = "red"
+        bg = "#fb7185"
     else:
-        kind = "blue"
-    palette = {"green": "#4ade80", "yellow": "#f59e0b", "red": "#fb7185", "blue": "#38bdf8"}
-    c = palette[kind]
-    return f"<span class='mini-badge' style='background:{c};color:#0b1220;'>{text}</span>"
+        bg = "#38bdf8"
+    return f"<span class='mini-badge' style='background:{bg};color:#0b1220;'>{text}</span>"
 
 
 def _month_summary(df: pd.DataFrame) -> pd.DataFrame:
@@ -459,11 +443,14 @@ def _month_summary(df: pd.DataFrame) -> pd.DataFrame:
         shipped=("workflow_stage", lambda s: (s == "SHIPPED").sum()),
         exceptions=("attention_flag", lambda s: (s == "YES").sum()),
     ).reset_index()
-    g["month_key"] = g["month_key"].fillna("")
     return g.sort_values("month_key", ascending=False)
 
 
 def render_orders():
+    load_css("styles.css")
+    load_css("orders.css")
+
+    st.markdown('<div class="orders-page">', unsafe_allow_html=True)
     st.markdown(_css(), unsafe_allow_html=True)
     st.markdown(
         """
@@ -485,9 +472,7 @@ def render_orders():
     owner_name, account, label = _resolve_connected_owner()
     if not owner_name or not account:
         st.warning("No connected eBay account found. Go to Settings and connect eBay first.")
-        if st.button("Go to Settings"):
-            st.session_state.active_page = "Settings"
-            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
         return
 
     today_est = datetime.now(EASTERN_TZ).date()
@@ -521,16 +506,8 @@ def render_orders():
         else:
             start_day, end_day = today_est - timedelta(days=30), today_est
 
-        fulfillment_status = st.selectbox(
-            "Fulfillment status",
-            ["All", "NOT_STARTED", "IN_PROGRESS", "FULFILLED"],
-            index=0,
-        )
-        workflow_view = st.selectbox(
-            "Workflow view",
-            ["All", "TO_BUY", "BUYING", "WAITING_TRACKING", "SHIPPED", "CANCELLED"],
-            index=0,
-        )
+        fulfillment_status = st.selectbox("Fulfillment status", ["All", "NOT_STARTED", "IN_PROGRESS", "FULFILLED"], index=0)
+        workflow_view = st.selectbox("Workflow view", ["All", "TO_BUY", "BUYING", "WAITING_TRACKING", "SHIPPED", "CANCELLED"], index=0)
         month_filter = st.text_input("Month filter", placeholder="2026-05")
         search = st.text_input("Search orders", placeholder="Order ID, buyer, SKU, title")
         refresh = st.button("Refresh live orders", use_container_width=True)
@@ -559,6 +536,7 @@ def render_orders():
                     st.write(str(exc))
                     st.write("Start UTC:", _fmt_ebay_utc(start_utc))
                     st.write("End UTC:", _fmt_ebay_utc(end_utc))
+                st.markdown("</div>", unsafe_allow_html=True)
                 return
 
     payload = st.session_state[cache_key]
@@ -569,6 +547,7 @@ def render_orders():
     df = pd.DataFrame(rows)
     if df.empty:
         st.info("No eBay orders were returned for this date range.")
+        st.markdown("</div>", unsafe_allow_html=True)
         return
 
     if search:
@@ -589,9 +568,7 @@ def render_orders():
     _render_metrics(df)
     month_df = _month_summary(df)
 
-    tab_overview, tab_queue, tab_months, tab_exceptions = st.tabs(
-        ["Overview", "Work Queue", "Monthly Profit", "Exceptions"]
-    )
+    tab_overview, tab_queue, tab_months, tab_exceptions = st.tabs(["Overview", "Work Queue", "Monthly Profit", "Exceptions"])
 
     with tab_overview:
         left, right = st.columns([0.68, 0.32], gap="large")
@@ -682,26 +659,26 @@ def render_orders():
             st.markdown(f"<div class='detail-line'><div class='detail-label'>Fulfillment</div><div>{row['fulfillment_status'] or '—'}</div></div>", unsafe_allow_html=True)
             st.markdown(f"<div class='detail-line'><div class='detail-label'>Tracking</div><div>{row['tracking'] or 'Pending'}</div></div>", unsafe_allow_html=True)
             st.markdown(f"<div class='detail-line'><div class='detail-label'>Month</div><div>{row['month_key'] or '—'}</div></div>", unsafe_allow_html=True)
-
             st.markdown("<hr style='border-color: rgba(148,163,184,0.16);'/>", unsafe_allow_html=True)
-            st.button("Mark To Buy", use_container_width=True)
-            st.button("Mark Buying", use_container_width=True)
-            st.button("Attach Tracking", use_container_width=True)
-            st.button("Mark Shipped", use_container_width=True)
+            c1, c2 = st.columns(2)
+            c1.button("Mark To Buy", use_container_width=True)
+            c2.button("Mark Buying", use_container_width=True)
+            c3, c4 = st.columns(2)
+            c3.button("Attach Tracking", use_container_width=True)
+            c4.button("Mark Shipped", use_container_width=True)
             st.button("Flag Exception", use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
     with tab_queue:
-        queue_cols = ["created", "order_id", "buyer", "sku", "title", "workflow_stage", "supplier_name", "supplier_order_status", "tracking"]
         qdf = df[df["workflow_stage"].isin(["TO_BUY", "BUYING", "WAITING_TRACKING"])].copy()
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">AutoDS queue</div>', unsafe_allow_html=True)
-        st.markdown('<div class="subtle">This is the operational queue your future agent can work from: buy, wait, attach tracking, and close.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subtle">This queue is what your future agent works from: buy, wait, attach tracking, and close.</div>', unsafe_allow_html=True)
         if qdf.empty:
             st.info("No queue items in the current filter set.")
         else:
             st.dataframe(
-                qdf[queue_cols],
+                qdf[["created", "order_id", "buyer", "sku", "title", "workflow_stage", "supplier_name", "supplier_order_status", "tracking"]],
                 use_container_width=True,
                 hide_index=True,
             )
@@ -710,8 +687,7 @@ def render_orders():
     with tab_months:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Monthly profit</div>', unsafe_allow_html=True)
-        st.markdown('<div class="subtle">Use this section to review revenue, profit, and operational volume by month.</div>', unsafe_allow_html=True)
-
+        st.markdown('<div class="subtle">Review revenue, profit, and operational volume by month.</div>', unsafe_allow_html=True)
         if month_df.empty:
             st.info("No monthly data in the current filter set.")
         else:
@@ -735,19 +711,7 @@ def render_orders():
             st.success("No exceptions found.")
         else:
             st.dataframe(
-                exdf[
-                    [
-                        "created",
-                        "order_id",
-                        "buyer",
-                        "sku",
-                        "title",
-                        "fulfillment_status",
-                        "workflow_stage",
-                        "tracking",
-                        "month_key",
-                    ]
-                ],
+                exdf[["created", "order_id", "buyer", "sku", "title", "fulfillment_status", "workflow_stage", "tracking", "month_key"]],
                 use_container_width=True,
                 hide_index=True,
             )
@@ -760,6 +724,8 @@ def render_orders():
         st.write("Account owner:", owner_name)
         st.write("Connected account:", label)
         st.json({"fulfillment_status": fulfillment_status, "workflow_view": workflow_view, "search": search, "month_filter": month_filter})
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
