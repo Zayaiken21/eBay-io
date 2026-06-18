@@ -106,6 +106,7 @@ def _get_existing_offer(api_base: str, token: str, sku: str, marketplace_id: str
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
+                "Accept-Language": "en-US",
                 "X-EBAY-C-MARKETPLACE-ID": marketplace_id,
             },
             params={"sku": sku},
@@ -153,6 +154,7 @@ def get_seller_policies() -> dict:
         hdrs = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
+            "Accept-Language": "en-US",
             "X-EBAY-C-MARKETPLACE-ID": marketplace,
         }
 
@@ -209,9 +211,11 @@ def upload_to_ebay(product: dict) -> dict:
         api_base = "https://api.sandbox.ebay.com"
 
     hdrs = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type":  "application/json",
-        "Accept":        "application/json",
+        "Authorization":   f"Bearer {access_token}",
+        "Content-Type":    "application/json",
+        "Accept":          "application/json",
+        "Accept-Language": "en-US",
+        "Content-Language": "en-US",
         "X-EBAY-C-MARKETPLACE-ID": marketplace,
     }
 

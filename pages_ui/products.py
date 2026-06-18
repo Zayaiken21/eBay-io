@@ -1,7 +1,17 @@
 """
-products.py — Pro seller product manager.
-Auth: reads owner_name from st.session_state (set at login by auth.py).
-eBay: all token management via ebay_account_store — auto-refreshes, never stale.
+products.py — Pro seller product manager. Per-user, paginated, no item caps.
+
+Auth: owner = st.session_state.client_name (client login) or "ceo" (CEO login),
+      matching session.py exactly. Every draft/listing query is scoped to this owner.
+
+Drafts: stored in Supabase via core.draft_store — never a local file, so every
+        Streamlit Cloud replica and every redeploy sees the same per-user data.
+
+My Store: pulls LIVE listings directly from eBay's API (not our database) so
+          sellers can see and edit what's already posted.
+
+eBay upload: core.ebay_account_store handles token refresh — always fresh,
+             never a stale "please sign in" when already connected.
 """
 
 import streamlit as st
@@ -11,27 +21,19 @@ from ui.scraper         import fetch_product_page
 from ui.ai_rewriter     import rewrite_title, rewrite_description, generate_tags, auto_seo_optimize
 from ui.ebay_formatter  import generate_ebay_html, generate_ebay_export
 from ui.ebay_uploader   import upload_to_ebay, get_seller_policies, get_account_info
+from ui.ebay_listings   import fetch_my_listings, fetch_inventory_item
 from core.draft_store   import save_draft, load_draft, list_drafts, delete_draft, duplicate_draft
 
 
 # ─── CSS ──────────────────────────────────────────────────────────────────────
 CSS = """<style>
-/* ── Reset & base ── */
 *, *::before, *::after { box-sizing: border-box; }
 
-/* ── Hero ── */
 .pro-hero {
     background: linear-gradient(135deg, #0053a0 0%, #002d6b 100%);
-    color: #fff;
-    padding: 28px 34px;
-    border-radius: 14px;
-    margin-bottom: 26px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 16px;
-    box-shadow: 0 4px 24px rgba(0,83,160,0.18);
+    color: #fff; padding: 28px 34px; border-radius: 14px; margin-bottom: 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 16px; box-shadow: 0 4px 24px rgba(0,83,160,0.18);
 }
 .hero-left h1  { font-size: 26px; font-weight: 800; margin: 0 0 4px; letter-spacing: -0.4px; }
 .hero-left p   { opacity: 0.78; font-size: 13px; margin: 0; }
@@ -40,106 +42,84 @@ CSS = """<style>
 .hstat-num     { font-size: 30px; font-weight: 900; line-height: 1; }
 .hstat-lbl     { font-size: 10px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; }
 
-/* ── Account banner ── */
 .acct-banner {
     display: flex; align-items: center; gap: 10px;
     background: #f0fff4; border: 1px solid #9ae6b4;
     border-radius: 9px; padding: 10px 16px;
-    font-size: 13px; color: #276749; font-weight: 600;
-    margin-bottom: 16px;
+    font-size: 13px; color: #276749; font-weight: 600; margin-bottom: 16px;
 }
-.acct-banner.disconnected {
-    background: #fff8f0; border-color: #fbd38d; color: #744210;
-}
+.acct-banner.disconnected { background: #fff8f0; border-color: #fbd38d; color: #744210; }
 
-/* ── Import box ── */
 .import-box {
     background: linear-gradient(135deg, #f0f6ff 0%, #eaf0fe 100%);
-    border: 1.5px solid #c3d5f7;
-    border-radius: 12px;
-    padding: 26px 28px;
-    margin-bottom: 22px;
+    border: 1.5px solid #c3d5f7; border-radius: 12px;
+    padding: 26px 28px; margin-bottom: 22px;
 }
 .import-box h3 { margin: 0 0 5px; color: #1a3a6b; font-size: 16px; font-weight: 800; }
 .import-box p  { margin: 0 0 16px; color: #4a5568; font-size: 13px; }
 .site-pills    { display: flex; flex-wrap: wrap; gap: 6px; }
 .site-pill {
-    background: white; border: 1px solid #d1ddf5;
-    border-radius: 20px; padding: 3px 11px;
-    font-size: 11px; font-weight: 700; color: #2b5ba8;
+    background: white; border: 1px solid #d1ddf5; border-radius: 20px;
+    padding: 3px 11px; font-size: 11px; font-weight: 700; color: #2b5ba8;
 }
 
-/* ── Draft rows ── */
 .draft-row {
-    background: white; border: 1px solid #e8edf5;
-    border-radius: 12px; padding: 14px 16px;
-    margin-bottom: 9px;
+    background: white; border: 1px solid #e8edf5; border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 9px;
     transition: box-shadow .15s, border-color .15s;
 }
 .draft-row:hover { box-shadow: 0 3px 16px rgba(0,83,160,.09); border-color: #b8ccf0; }
 .draft-title { font-weight: 700; font-size: 14px; color: #1a202c; margin-bottom: 4px; line-height: 1.3; }
 .draft-meta  { font-size: 12px; color: #718096; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 
-/* ── Badges ── */
 .badge { display:inline-block; padding:2px 9px; border-radius:20px; font-size:11px; font-weight:700; }
 .b-draft    { background:#ebf4ff; color:#2b6cb0; }
 .b-ready    { background:#f0fff4; color:#276749; }
 .b-live     { background:#fffbeb; color:#92400e; border:1px solid #fbd38d; }
 .b-exported { background:#fef3c7; color:#92400e; }
+.b-ended    { background:#fee2e2; color:#991b1b; }
 
-/* ── Section headers in editor ── */
 .sec-hdr {
-    font-size: 10px; font-weight: 800;
-    letter-spacing: .12em; text-transform: uppercase;
-    color: #4a5568; margin: 26px 0 9px;
-    padding-bottom: 6px;
-    border-bottom: 1.5px solid #e8edf5;
-    display: flex; align-items: center; gap: 7px;
+    font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
+    color: #4a5568; margin: 26px 0 9px; padding-bottom: 6px;
+    border-bottom: 1.5px solid #e8edf5; display: flex; align-items: center; gap: 7px;
 }
 .sec-hdr-icon { font-size: 13px; }
 
-/* ── SEO score ── */
 .seo-row {
     display: flex; align-items: center; gap: 10px;
-    background: #f8fafc; border: 1px solid #e2e8f0;
-    border-radius: 8px; padding: 10px 14px;
-    margin-bottom: 18px;
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 18px;
 }
 .seo-track { flex: 1; height: 7px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
 .seo-fill  { height: 100%; border-radius: 4px; transition: width .4s ease; }
 .seo-label { font-size: 13px; font-weight: 800; min-width: 100px; }
 .seo-lbl-txt { font-size: 12px; font-weight: 700; color: #718096; min-width: 70px; }
 
-/* ── Checklist ── */
 .chk-row   { display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0; }
 .chk-ok    { color:#276749; font-size:15px; }
 .chk-warn  { color:#d97706; font-size:15px; }
 
-/* ── Export fields ── */
 .ef-card {
-    background:#f8fafc; border:1px solid #e2e8f0;
-    border-radius:8px; padding:12px 14px; margin-bottom:8px;
+    background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;
+    padding:12px 14px; margin-bottom:8px;
 }
 .ef-lbl  { font-size:10px; font-weight:800; color:#718096; text-transform:uppercase; letter-spacing:.08em; margin-bottom:3px; }
 .ef-val  { font-size:14px; font-weight:600; color:#1a202c; word-break:break-all; }
 
-/* ── Upload panel ── */
 .upload-panel {
     background: linear-gradient(135deg,#f0fff4 0%,#e6ffee 100%);
-    border: 1.5px solid #9ae6b4; border-radius: 12px;
-    padding: 22px; margin-top: 4px;
+    border: 1.5px solid #9ae6b4; border-radius: 12px; padding: 22px;
 }
 .upload-panel h4 { color:#276749; margin:0 0 5px; font-size:15px; font-weight:800; }
 .upload-panel p  { color:#4a5568; font-size:13px; margin:0 0 14px; }
 
 .no-connect-panel {
-    background: #fff8f0; border: 1.5px solid #fbd38d;
-    border-radius: 12px; padding: 22px;
+    background: #fff8f0; border: 1.5px solid #fbd38d; border-radius: 12px; padding: 22px;
 }
 .no-connect-panel h4 { color:#92400e; margin:0 0 6px; font-size:15px; font-weight:800; }
 .no-connect-panel p  { color:#744210; font-size:13px; margin:0; }
 
-/* ── Success result ── */
 .listing-success {
     background: linear-gradient(135deg,#f0fff4,#e6ffee);
     border: 2px solid #48bb78; border-radius: 12px;
@@ -148,13 +128,21 @@ CSS = """<style>
 .listing-success .ls-id  { font-size: 28px; font-weight: 900; color: #276749; }
 .listing-success .ls-sub { font-size: 13px; color: #4a7c59; margin-top: 4px; }
 
-/* ── Title char counter ── */
 .title-count { font-size: 12px; font-weight: 600; }
 .title-ok    { color: #276749; }
 .title-warn  { color: #d97706; }
 .title-over  { color: #e53e3e; }
 
-/* ── Streamlit overrides ── */
+/* ── Pagination ── */
+.page-info { font-size: 12px; color: #718096; text-align: center; margin: 4px 0; }
+
+/* ── Store listing row ── */
+.store-row {
+    background: white; border: 1px solid #e8edf5; border-radius: 12px;
+    padding: 12px 16px; margin-bottom: 8px;
+}
+.store-sku { font-size: 11px; color: #a0aec0; font-family: monospace; }
+
 .stTextInput>div>div>input          { border-radius:8px!important; font-size:14px!important; }
 .stTextArea>div>div>textarea        { border-radius:8px!important; font-size:14px!important; line-height:1.6!important; }
 .stButton>button                    { border-radius:8px!important; font-weight:700!important; font-size:13px!important; }
@@ -169,24 +157,22 @@ div[data-testid="stExpander"] summary { font-weight:600; }
 
 def _init():
     for k, v in {
-        "prod_tab":       "import",
-        "import_result":  None,
-        "editing_id":     None,
-        "edit_product":   None,
-        "export_data":    None,
-        "upload_result":  None,
-        "policies":       None,
-        "policies_loaded":False,
+        "prod_tab":        "import",
+        "import_result":   None,
+        "editing_id":       None,
+        "edit_product":     None,
+        "export_data":      None,
+        "upload_result":    None,
+        "policies":         None,
+        "drafts_page":      1,
+        "store_page":       1,
+        "store_data":       None,
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
 def _owner() -> str:
-    """
-    Resolve owner_name — matches session.py exactly.
-    session.py sets: client_name, role, authenticated.
-    validate_client_token() returns {"client_name": ..., "token": ..., "active": ...}
-    """
+    """Resolve owner — matches session.py exactly (client_name or 'ceo')."""
     client_name = st.session_state.get("client_name") or ""
     role        = st.session_state.get("role") or ""
     if client_name:
@@ -199,14 +185,12 @@ def _set_tab(tab: str):
     st.session_state.prod_tab = tab
 
 
-# ─── Hero ─────────────────────────────────────────────────────────────────────
+# ─── Hero & account banner ────────────────────────────────────────────────────
 
-def _hero(drafts: list):
-    live        = sum(1 for d in drafts if d.get("status") == "live")
-    ready       = sum(1 for d in drafts if d.get("status") == "ready")
-    owner       = _owner()
-    role        = st.session_state.get("role") or ""
-    role_label  = "CEO" if role == "ceo" else owner
+def _hero(total_drafts: int):
+    role       = st.session_state.get("role") or ""
+    owner      = _owner()
+    role_label = "CEO" if role == "ceo" else owner
     st.markdown(f"""
     <div class="pro-hero">
       <div class="hero-left">
@@ -214,27 +198,17 @@ def _hero(drafts: list):
         <p>Logged in as <strong>{role_label}</strong> · Import · Optimize · Publish</p>
       </div>
       <div class="hero-stats">
-        <div class="hstat"><div class="hstat-num">{len(drafts)}</div><div class="hstat-lbl">Total</div></div>
-        <div class="hstat"><div class="hstat-num">{ready}</div><div class="hstat-lbl">Ready</div></div>
-        <div class="hstat"><div class="hstat-num">{live}</div><div class="hstat-lbl">Live</div></div>
+        <div class="hstat"><div class="hstat-num">{total_drafts}</div><div class="hstat-lbl">Drafts</div></div>
       </div>
     </div>""", unsafe_allow_html=True)
 
 
 def _account_banner():
-    """
-    Show connected eBay account status.
-    Reads fresh from Supabase via get_account_info() which uses
-    _owner() → st.session_state.client_name (set by session.py at login).
-    Never uses cached tokens — always reads the latest row.
-    """
     try:
         info = get_account_info()
     except Exception as e:
-        st.markdown(f"""
-        <div class="acct-banner disconnected">
-            ⚠️ &nbsp;Could not read eBay account: {e}
-        </div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="acct-banner disconnected">
+            ⚠️ &nbsp;Could not read eBay account: {e}</div>""", unsafe_allow_html=True)
         return
 
     if info:
@@ -242,29 +216,24 @@ def _account_banner():
                    or info.get("ebay_user_id") or "eBay Account")
         env     = info.get("environment", "production")
         env_tag = " · Sandbox" if env != "production" else " · Live"
-        st.markdown(f"""
-        <div class="acct-banner">
+        st.markdown(f"""<div class="acct-banner">
             ✅ &nbsp;Connected: <strong>{label}</strong>{env_tag}
-            &nbsp;·&nbsp; Listings will post to this account
-        </div>""", unsafe_allow_html=True)
+            &nbsp;·&nbsp; Listings post to this account</div>""", unsafe_allow_html=True)
     else:
         owner = _owner()
-        hint  = f"(looking for owner: <code>{owner}</code>)" if owner != "default" else ""
-        st.markdown(f"""
-        <div class="acct-banner disconnected">
-            ⚠️ &nbsp;No eBay account connected {hint} — go to
-            <strong>Settings</strong> to connect your eBay store
-        </div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="acct-banner disconnected">
+            ⚠️ &nbsp;No eBay account connected for <code>{owner}</code> — go to
+            <strong>Settings</strong> to connect your store</div>""", unsafe_allow_html=True)
 
 
 # ─── Tab navigation ───────────────────────────────────────────────────────────
 
 def _tabs(draft_count: int):
-    c1, c2, c3, c4, _ = st.columns([2, 2.5, 2, 2, 4])
+    c1, c2, c3, c4, c5, _ = st.columns([2, 2.3, 2, 2, 2.3, 2])
     for col, key, label in zip(
-        [c1, c2, c3, c4],
-        ["import", "drafts", "editor", "publish"],
-        ["⬇️ Import", f"📝 Drafts ({draft_count})", "✏️ Editor", "🚀 Publish"],
+        [c1, c2, c3, c4, c5],
+        ["import", "drafts", "editor", "publish", "store"],
+        ["⬇️ Import", f"📝 Drafts ({draft_count})", "✏️ Editor", "🚀 Publish", "🏬 My Store"],
     ):
         with col:
             disabled = (key == "editor" and not st.session_state.edit_product)
@@ -273,6 +242,50 @@ def _tabs(draft_count: int):
                          use_container_width=True, disabled=disabled):
                 _set_tab(key); st.rerun()
     st.markdown("<hr style='margin:10px 0 22px;border-color:#e2e8f0;'>", unsafe_allow_html=True)
+
+
+# ─── Pagination widget ────────────────────────────────────────────────────────
+
+def _pagination(current_page: int, total_pages: int, key_prefix: str, on_change_key: str) -> int:
+    """Renders Prev / page numbers / Next. Returns the (possibly new) page number."""
+    if total_pages <= 1:
+        return current_page
+
+    new_page = current_page
+    # Build a window of page numbers around the current page
+    window = 2
+    start  = max(1, current_page - window)
+    end    = min(total_pages, current_page + window)
+    page_nums = list(range(start, end + 1))
+    if start > 1: page_nums = [1, "…"] + page_nums
+    if end < total_pages: page_nums = page_nums + ["…", total_pages]
+
+    cols = st.columns([1] + [1] * len(page_nums) + [1])
+    with cols[0]:
+        if st.button("‹ Prev", key=f"{key_prefix}_prev", disabled=current_page <= 1,
+                     use_container_width=True):
+            new_page = current_page - 1
+    for i, pn in enumerate(page_nums):
+        with cols[i + 1]:
+            if pn == "…":
+                st.markdown("<div style='text-align:center;color:#a0aec0;padding-top:6px;'>…</div>",
+                            unsafe_allow_html=True)
+            else:
+                is_current = (pn == current_page)
+                if st.button(str(pn), key=f"{key_prefix}_p{pn}",
+                             type="primary" if is_current else "secondary",
+                             use_container_width=True):
+                    new_page = pn
+    with cols[-1]:
+        if st.button("Next ›", key=f"{key_prefix}_next", disabled=current_page >= total_pages,
+                     use_container_width=True):
+            new_page = current_page + 1
+
+    if new_page != current_page:
+        st.session_state[on_change_key] = new_page
+        st.rerun()
+
+    return new_page
 
 
 # ─── IMPORT TAB ───────────────────────────────────────────────────────────────
@@ -402,14 +415,9 @@ def _show_import_result(p: dict):
 
 # ─── DRAFTS TAB ───────────────────────────────────────────────────────────────
 
-def _tab_drafts():
-    drafts = list_drafts()
-    if not drafts:
-        st.info("No drafts yet. Import a product to get started.")
-        if st.button("⬇️ Go to Import", type="primary"):
-            _set_tab("import"); st.rerun()
-        return
+PAGE_SIZE = 12
 
+def _tab_drafts():
     cs, cf = st.columns([4, 2])
     with cs:
         srch = st.text_input("Search", placeholder="🔍 Search by title…",
@@ -418,12 +426,26 @@ def _tab_drafts():
         filt = st.selectbox("Filter", ["All", "Draft", "Ready", "Live", "Exported"],
                              label_visibility="collapsed", key="dfilt")
 
+    page   = st.session_state.drafts_page
+    result = list_drafts(page=page, page_size=PAGE_SIZE)
+    drafts = result["items"]
+
+    if result["total"] == 0:
+        st.info("No drafts yet. Import a product to get started.")
+        if st.button("⬇️ Go to Import", type="primary"):
+            _set_tab("import"); st.rerun()
+        return
+
+    # Client-side search/filter only applies within current page for display;
+    # for a true cross-page search you'd want a server-side query — but with
+    # no item cap, paging + light client filtering keeps this fast.
     shown = [d for d in drafts if
              (not srch or srch.lower() in d.get("title","").lower()) and
              (filt == "All" or d.get("status","draft").lower() == filt.lower())]
 
     st.markdown(f"<div style='font-size:12px;color:#718096;margin-bottom:12px;'>"
-                f"{len(shown)} of {len(drafts)} drafts</div>", unsafe_allow_html=True)
+                f"{result['total']} total drafts · page {result['page']} of {result['total_pages']}</div>",
+                unsafe_allow_html=True)
 
     for d in shown:
         did    = d.get("draft_id", "?")
@@ -474,14 +496,17 @@ def _tab_drafts():
                     unsafe_allow_html=True)
 
     st.markdown("---")
-    if st.button("✨ Auto-SEO All Drafts", use_container_width=False,
-                 help="Optimize all draft-status listings in bulk"):
+    _pagination(result["page"], result["total_pages"], "drafts", "drafts_page")
+
+    st.markdown("---")
+    if st.button("✨ Auto-SEO This Page", use_container_width=False,
+                 help="Optimize all draft-status listings on this page"):
         count = 0
-        for d in list_drafts():
+        for d in drafts:
             if d.get("status", "draft") == "draft":
                 save_draft(auto_seo_optimize(d), d.get("draft_id"))
                 count += 1
-        st.success(f"Optimized {count} drafts!")
+        st.success(f"Optimized {count} drafts on this page!")
         st.rerun()
 
 
@@ -495,6 +520,16 @@ def _open_editor(draft_id: str):
         st.session_state.export_data   = None
         st.session_state.upload_result = None
         st.session_state.prod_tab      = "editor"
+
+def _open_editor_from_ebay(sku: str):
+    """Pull a LIVE eBay listing into the editor (creates a local draft mirror)."""
+    result = fetch_inventory_item(sku)
+    if not result["success"]:
+        st.error(f"Could not load listing: {result['error']}")
+        return
+    product = result["product"]
+    did = save_draft(product)
+    _open_editor(did)
 
 
 def _seo_score(p: dict) -> int:
@@ -530,11 +565,9 @@ def _tab_editor():
         if st.button("← Drafts"): _set_tab("drafts"); st.rerun()
         return
 
-    # Always reload fresh from store to avoid stale data
     p   = st.session_state.edit_product
     did = st.session_state.editing_id
 
-    # ── Top action bar ────────────────────────────────────────────────
     cb, cm, cseo, csave = st.columns([1, 4, 2, 1])
     with cb:
         if st.button("← Drafts"):
@@ -555,7 +588,6 @@ def _tab_editor():
         if st.button("💾", use_container_width=True, help="Save draft"):
             save_draft(p, did); st.toast("Saved!", icon="✅")
 
-    # ── SEO score bar ─────────────────────────────────────────────────
     score = _seo_score(p)
     color = "#48bb78" if score >= 70 else "#ed8936" if score >= 40 else "#fc8181"
     label = "Excellent" if score >= 85 else "Good" if score >= 70 else "Fair" if score >= 40 else "Needs Work"
@@ -567,11 +599,9 @@ def _tab_editor():
       <span style="font-size:12px;color:#718096;">{label}</span>
     </div>""", unsafe_allow_html=True)
 
-    # ── Two-column layout ─────────────────────────────────────────────
     col_l, col_r = st.columns([3, 2])
 
     with col_l:
-        # Title
         st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">🏷️</span>Title</div>',
                     unsafe_allow_html=True)
         ct, ctb = st.columns([6, 1])
@@ -590,7 +620,6 @@ def _tab_editor():
         st.markdown(f'<div class="title-count {tcls}">{tl}/80 characters</div>',
                     unsafe_allow_html=True)
 
-        # Listing details
         st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">📋</span>Listing Details</div>',
                     unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
@@ -612,10 +641,9 @@ def _tab_editor():
         with c6: p["weight"]     = st.text_input("Weight",     value=p.get("weight",""),     key="ed_wt")
         with c7: p["dimensions"] = st.text_input("Dimensions", value=p.get("dimensions",""), key="ed_dims")
 
-        p["quantity"] = st.number_input("Quantity", min_value=1, max_value=9999,
+        p["quantity"] = st.number_input("Quantity", min_value=1, max_value=999999,
                                          value=int(p.get("quantity", 1)), key="ed_qty")
 
-        # Description
         st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">📝</span>Description</div>',
                     unsafe_allow_html=True)
         cdb, _ = st.columns([2, 5])
@@ -636,14 +664,12 @@ def _tab_editor():
                                           height=260, label_visibility="collapsed", key="ed_desc")
         st.caption(f"{len(p.get('description',''))} characters")
 
-        # Features
         st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">✅</span>Key Features</div>',
                     unsafe_allow_html=True)
         feats_ed = st.text_area("Features (one per line)", value="\n".join(p.get("features",[])),
                                  height=120, label_visibility="collapsed", key="ed_feats")
         p["features"] = [f.strip() for f in feats_ed.splitlines() if f.strip()]
 
-        # Specs
         st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">🔧</span>Specifications</div>',
                     unsafe_allow_html=True)
         specs_raw = "\n".join(f"{k}: {v}" for k,v in (p.get("specifications") or {}).items())
@@ -656,7 +682,6 @@ def _tab_editor():
                 if k.strip(): new_specs[k.strip()] = v.strip()
         p["specifications"] = new_specs
 
-        # Tags
         st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">🏷️</span>Search Tags</div>',
                     unsafe_allow_html=True)
         ctg, ctgb = st.columns([6, 1])
@@ -670,13 +695,12 @@ def _tab_editor():
             p["tags"] = [t.strip() for t in tags_ed.split(",") if t.strip()]
 
     with col_r:
-        # Images
         st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">🖼️</span>'
                     f'Images ({len(p.get("images",[]))}/12)</div>', unsafe_allow_html=True)
-        imgs     = p.get("images", [])
-        to_del   = []
+        imgs   = p.get("images", [])
+        to_del = []
         for i in range(0, len(imgs), 3):
-            row  = imgs[i:i+3]
+            row   = imgs[i:i+3]
             rcols = st.columns(3)
             for j, url in enumerate(row):
                 with rcols[j]:
@@ -699,22 +723,24 @@ def _tab_editor():
                 st.rerun()
         st.caption("💡 Image #1 = eBay cover photo")
 
-        # SEO checklist
         st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">📊</span>SEO Checklist</div>',
                     unsafe_allow_html=True)
         for item, ok in _checklist(p):
             icon = '<span class="chk-ok">✅</span>' if ok else '<span class="chk-warn">⚠️</span>'
             st.markdown(f'<div class="chk-row">{icon} {item}</div>', unsafe_allow_html=True)
 
-        # Source link
         if p.get("source_url"):
             st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">🔗</span>Source</div>',
                         unsafe_allow_html=True)
             st.caption(f"[{p.get('domain','')}]({p['source_url']})")
 
+        if p.get("ebay_listing_url"):
+            st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">🛒</span>Live Listing</div>',
+                        unsafe_allow_html=True)
+            st.caption(f"[View on eBay]({p['ebay_listing_url']})")
+
     st.session_state.edit_product = p
 
-    # ── Generate listing ──────────────────────────────────────────────
     st.markdown("---")
     cg, cp2, cclose = st.columns([3, 2, 2])
     with cg:
@@ -722,8 +748,8 @@ def _tab_editor():
             p["ebay_html"] = generate_ebay_html(p)
             p["status"]    = "ready"
             save_draft(p, did)
-            st.session_state.export_data   = generate_ebay_export(p)
-            st.session_state.edit_product  = p
+            st.session_state.export_data  = generate_ebay_export(p)
+            st.session_state.edit_product = p
             st.success("Listing generated! Go to the Publish tab to preview and post.")
     with cp2:
         if st.session_state.export_data:
@@ -801,10 +827,9 @@ def _tab_publish():
 
 
 def _upload_panel(p: dict, exp: dict):
-    did = st.session_state.editing_id
-
-    # ── Show connected account ────────────────────────────────────────
+    did   = st.session_state.editing_id
     owner = _owner()
+
     try:
         info = get_account_info()
     except Exception as e:
@@ -829,11 +854,10 @@ def _upload_panel(p: dict, exp: dict):
             """)
         return
 
-    # Connected — show account info
-    acct_label    = (info.get("store_name") or info.get("ebay_username")
-                     or info.get("ebay_user_id") or "Your eBay Store")
-    env           = info.get("environment", "production")
-    env_tag       = " · Sandbox" if env != "production" else " · Live"
+    acct_label     = (info.get("store_name") or info.get("ebay_username")
+                      or info.get("ebay_user_id") or "Your eBay Store")
+    env            = info.get("environment", "production")
+    env_tag        = " · Sandbox" if env != "production" else " · Live"
     resolved_owner = info.get("_resolved_owner", owner)
 
     st.markdown(f"""
@@ -844,25 +868,20 @@ def _upload_panel(p: dict, exp: dict):
     </div>""", unsafe_allow_html=True)
     st.caption(f"Owner: `{resolved_owner}` · Environment: `{env}`")
 
-    st.markdown("")
-
-    # ── Listing policies ──────────────────────────────────────────────
     st.markdown("**Listing Policies** — required by eBay Inventory API:")
     cload, _ = st.columns([2, 5])
     with cload:
-        if st.button("🔄 Load my eBay policies", use_container_width=True,
-                     key="load_policies"):
+        if st.button("🔄 Load my eBay policies", use_container_width=True, key="load_policies"):
             with st.spinner("Fetching from eBay…"):
                 result = get_seller_policies()
                 if result.get("error"):
                     st.error(f"Could not load policies: {result['error']}")
                 else:
-                    st.session_state.policies        = result
-                    st.session_state.policies_loaded = True
+                    st.session_state.policies = result
                     st.rerun()
 
     policies = st.session_state.policies or {}
-    cf, cp, cr = st.columns(3)
+    cf, cpcol, cr = st.columns(3)
 
     with cf:
         ff = policies.get("fulfillment", [])
@@ -873,7 +892,7 @@ def _upload_panel(p: dict, exp: dict):
             p["fulfillment_policy_id"] = st.text_input("Fulfillment Policy ID",
                 value=p.get("fulfillment_policy_id",""), key="pol_f_txt")
 
-    with cp:
+    with cpcol:
         pp = policies.get("payment", [])
         if pp:
             sel = st.selectbox("Payment", [x["name"] for x in pp], key="pol_p")
@@ -898,43 +917,30 @@ def _upload_panel(p: dict, exp: dict):
         help="Set up in eBay Seller Hub → Locations. Usually 'default' for single-location sellers."
     )
 
-    # Attach generated HTML to product before upload
     p["ebay_html"] = exp.get("description_html", "")
     st.session_state.edit_product = p
 
     st.markdown("---")
 
-    # ── Publish buttons ───────────────────────────────────────────────
     missing_policies = not all([
-        p.get("fulfillment_policy_id"),
-        p.get("payment_policy_id"),
-        p.get("return_policy_id"),
+        p.get("fulfillment_policy_id"), p.get("payment_policy_id"), p.get("return_policy_id"),
     ])
-
     if missing_policies:
         st.warning("⚠️ Load your eBay policies above and select fulfillment, payment, and return policies before publishing.")
 
-    cpub, ctest = st.columns(2)
-    with cpub:
-        if st.button("🚀 Publish to eBay (LIVE)", type="primary",
-                     use_container_width=True, disabled=missing_policies):
-            with st.spinner("Publishing to eBay…"):
-                result = upload_to_ebay(p)
-            st.session_state.upload_result = result
-            if result["success"]:
-                p["status"]            = "live"
-                p["ebay_listing_id"]   = result["listing_id"]
-                p["ebay_listing_url"]  = result["listing_url"]
-                save_draft(p, did)
-                st.session_state.edit_product = p
-            st.rerun()
+    if st.button("🚀 Publish to eBay", type="primary",
+                 use_container_width=True, disabled=missing_policies):
+        with st.spinner("Publishing to eBay…"):
+            result = upload_to_ebay(p)
+        st.session_state.upload_result = result
+        if result["success"]:
+            p["status"]           = "live"
+            p["ebay_listing_id"]  = result["listing_id"]
+            p["ebay_listing_url"] = result["listing_url"]
+            save_draft(p, did)
+            st.session_state.edit_product = p
+        st.rerun()
 
-    with ctest:
-        if st.button("🧪 Test on Sandbox", use_container_width=True):
-            st.info("To test on sandbox, connect a sandbox eBay account in Settings "
-                    "and this will route automatically.")
-
-    # ── Upload result ─────────────────────────────────────────────────
     ur = st.session_state.upload_result
     if ur:
         if ur.get("success"):
@@ -951,11 +957,85 @@ def _upload_panel(p: dict, exp: dict):
             st.error(f"❌ Upload failed: {ur['error']}")
             with st.expander("Troubleshooting"):
                 st.markdown("""
-- **Policy IDs**: Make sure you selected valid policies from your eBay account
-- **Merchant Location**: Must match a location key set up in eBay Seller Hub
-- **Token**: If your eBay connection is old, disconnect and reconnect in Settings
-- **Sandbox vs Live**: Sandbox policies ≠ production policies
+- **Policy IDs**: Must be valid policies from your own eBay account, matching the environment (sandbox policies won't work in production and vice versa)
+- **Merchant Location**: Must match a location key set up in eBay Seller Hub → Locations
+- **Token**: If you reconnected eBay recently and still see auth errors, disconnect and reconnect in Settings
+- **Content-Language**: Handled automatically (en-US) — no action needed
                 """)
+
+
+# ─── MY STORE TAB ─────────────────────────────────────────────────────────────
+
+STORE_PAGE_SIZE = 25
+
+def _tab_store():
+    st.markdown("<div style='font-size:16px;font-weight:800;margin-bottom:4px;'>"
+                "🏬 My eBay Store</div>", unsafe_allow_html=True)
+    st.caption("Live listings pulled directly from your connected eBay account — not from our database.")
+
+    try:
+        info = get_account_info()
+    except Exception as e:
+        st.error(f"Could not check eBay connection: {e}")
+        return
+
+    if not info:
+        st.markdown("""
+        <div class="no-connect-panel">
+          <h4>⚠️ No eBay Account Connected</h4>
+          <p>Connect your store in <strong>Settings</strong> to see your live listings here.</p>
+        </div>""", unsafe_allow_html=True)
+        return
+
+    crf, _ = st.columns([2, 5])
+    with crf:
+        if st.button("🔄 Refresh listings", use_container_width=True):
+            st.session_state.store_data = None
+            st.rerun()
+
+    if st.session_state.store_data is None or st.session_state.store_data.get("page") != st.session_state.store_page:
+        with st.spinner("Loading your eBay listings…"):
+            st.session_state.store_data = fetch_my_listings(
+                page=st.session_state.store_page, page_size=STORE_PAGE_SIZE
+            )
+
+    data = st.session_state.store_data
+
+    if not data["success"]:
+        st.error(f"❌ {data['error']}")
+        return
+
+    if data["total"] == 0:
+        st.info("No live listings found on your eBay store yet.")
+        return
+
+    st.markdown(f"<div style='font-size:12px;color:#718096;margin-bottom:12px;'>"
+                f"{data['total']} live listings · page {data['page']} of {data['total_pages']}</div>",
+                unsafe_allow_html=True)
+
+    for item in data["items"]:
+        c1, c2, c3 = st.columns([4, 2, 2])
+        with c1:
+            st.markdown(f"""
+            <div class="store-row">
+              <div class="draft-title">{item['title'][:70]}</div>
+              <div class="draft-meta">
+                <span class="badge b-live">{item.get('status','ACTIVE')}</span>
+                <span>${item.get('price','—')}</span>
+                <span>Qty: {item.get('quantity', 0)}</span>
+                <span class="store-sku">SKU: {item.get('sku','')}</span>
+              </div>
+            </div>""", unsafe_allow_html=True)
+        with c2:
+            if item.get("listing_url"):
+                st.markdown(f"[🔗 View on eBay]({item['listing_url']})")
+        with c3:
+            if st.button("✏️ Edit this listing", key=f"store_edit_{item['sku']}", use_container_width=True):
+                _open_editor_from_ebay(item["sku"])
+                st.rerun()
+
+    st.markdown("---")
+    _pagination(data["page"], data["total_pages"], "store", "store_page")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -964,13 +1044,14 @@ def render_products() -> None:
     _init()
     st.markdown(CSS, unsafe_allow_html=True)
 
-    drafts = list_drafts()
-    _hero(drafts)
+    drafts_count = list_drafts(page=1, page_size=1)["total"]
+    _hero(drafts_count)
     _account_banner()
-    _tabs(len(drafts))
+    _tabs(drafts_count)
 
     tab = st.session_state.prod_tab
     if   tab == "import":  _tab_import()
     elif tab == "drafts":  _tab_drafts()
     elif tab == "editor":  _tab_editor()
     elif tab == "publish": _tab_publish()
+    elif tab == "store":   _tab_store()
