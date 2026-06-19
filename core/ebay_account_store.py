@@ -91,8 +91,37 @@ def _extract_user_fields(ebay_user: dict[str, Any] | None) -> tuple[str | None, 
 
 
 def _normal_owner(owner_name: str | None) -> str:
+    """Canonical owner key used for eBay account ownership.
+
+    Fixes the CEO mismatch without reintroducing the old dangerous
+    fallback where client accounts could inherit the shared/default eBay
+    connection. CEO may appear in session as "CEO" or "ceo"; both
+    must resolve to the same saved eBay account. Client names remain exact.
+    """
     owner_name = (owner_name or "").strip()
-    return owner_name or "default"
+    if not owner_name:
+        return "default"
+    if owner_name.lower() == "ceo":
+        return "ceo"
+    return owner_name
+
+
+def _owner_lookup_values(owner_name: str | None) -> list[str]:
+    """Return safe owner aliases to search in Supabase.
+
+    Only CEO gets legacy-case aliases. Regular client users get their exact
+    owner key only, so they cannot see the CEO/default eBay account.
+    """
+    raw = (owner_name or "").strip()
+    owner = _normal_owner(raw)
+    values = [owner]
+
+    if owner == "ceo":
+        for alias in ("CEO", "Ceo"):
+            if alias not in values:
+                values.append(alias)
+
+    return values
 
 
 def _request(method: str, url: str, **kwargs):
@@ -104,14 +133,16 @@ def _request(method: str, url: str, **kwargs):
 
 def delete_ebay_account(owner_name: str, environment: str | None = None) -> None:
     """
-    Removes saved eBay OAuth tokens so the next connect attempt starts fresh.
-    Also removes legacy rows saved under 'default' for the same environment.
+    Removes saved eBay OAuth tokens for this exact app owner.
+
+    Important isolation fix:
+    - Client users must NOT delete or inherit the shared/default/CEO account.
+    - CEO supports legacy rows saved as "CEO" or "ceo".
     """
     if not _using_supabase():
         return
 
-    owners = {_normal_owner(owner_name), "default"}
-    for owner in owners:
+    for owner in _owner_lookup_values(owner_name):
         params = {"owner_name": f"eq.{owner}"}
         if environment:
             params["environment"] = f"eq.{environment}"
@@ -198,34 +229,32 @@ def _decode_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_latest_ebay_account(owner_name: str, environment: str | None = None) -> dict[str, Any] | None:
-    """Return the eBay account saved for this exact app user only.
-
-    Tenant-isolation rule: never fall back to the shared/legacy "default"
-    eBay account for a client user. That fallback is what caused client token
-    accounts to see the CEO store listings in Product Manager → My Store.
-    """
     if not _using_supabase():
         return None
 
-    owner = _normal_owner(owner_name)
-    params = {
-        "owner_name": f"eq.{owner}",
-        "select": "*",
-        "order": "updated_at.desc,id.desc",
-        "limit": "1",
-    }
-    if environment:
-        params["environment"] = f"eq.{environment}"
+    # Do not fall back to "default" for clients. That was causing client
+    # accounts to see the CEO/default eBay store. CEO still supports old rows
+    # that may have been saved as either "CEO" or "ceo".
+    for current_owner in _owner_lookup_values(owner_name):
+        params = {
+            "owner_name": f"eq.{current_owner}",
+            "select": "*",
+            "order": "updated_at.desc,id.desc",
+            "limit": "1",
+        }
+        if environment:
+            params["environment"] = f"eq.{environment}"
 
-    response = requests.get(_table_url(), headers=_headers(), params=params, timeout=30)
-    if response.status_code >= 400:
-        raise RuntimeError(f"Supabase load failed: {response.status_code} {response.text}")
+        response = requests.get(_table_url(), headers=_headers(), params=params, timeout=30)
+        if response.status_code >= 400:
+            raise RuntimeError(f"Supabase load failed: {response.status_code} {response.text}")
 
-    rows = response.json()
-    if rows:
-        row = _decode_row(rows[0])
-        row["_resolved_owner"] = owner
-        return row
+        rows = response.json()
+        if rows:
+            decoded = _decode_row(rows[0])
+            decoded["_resolved_owner"] = current_owner
+            decoded["_requested_owner"] = _normal_owner(owner_name)
+            return decoded
 
     return None
 
