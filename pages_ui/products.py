@@ -4,12 +4,14 @@ products.py — Pro seller product manager. Per-user, paginated, no item caps.
 Auth: owner = st.session_state.client_name (client login) or "ceo" (CEO login),
       matching session.py exactly. Every draft/listing query is scoped to this owner.
 
-Drafts: stored through core.draft_store with per-user isolation.
+Drafts: stored in Supabase via core.draft_store — never a local file, so every
+        Streamlit Cloud replica and every redeploy sees the same per-user data.
 
 My Store: pulls LIVE listings directly from eBay's API (not our database) so
           sellers can see and edit what's already posted.
 
-eBay upload: core.ebay_account_store handles connected-account token refresh.
+eBay upload: core.ebay_account_store handles token refresh — always fresh,
+             never a stale "please sign in" when already connected.
 """
 
 import re
@@ -481,7 +483,7 @@ def _tab_drafts():
         result = _list_drafts_safe(page=page, page_size=PAGE_SIZE)
     except Exception as e:
         st.error(f"⚠️ Could not load drafts: {e}")
-        st.caption("Check that `core/draft_store.py` is present and writable for the signed-in user.")
+        st.caption("Check that `core/draft_store.py` is the latest version and the `product_drafts` table exists in Supabase.")
         return
     drafts = result["items"]
 
@@ -903,7 +905,7 @@ def _upload_panel(p: dict, exp: dict):
         info = get_account_info()
     except Exception as e:
         st.error(f"❌ Could not read connected eBay account: {e}")
-        st.caption(f"Resolved owner_name: `{owner}` · reconnect eBay in Settings if needed.")
+        st.caption(f"Resolved owner_name: `{owner}` · Reconnect eBay in Settings if this account is missing or expired.")
         return
 
     if not info:
@@ -979,35 +981,24 @@ def _upload_panel(p: dict, exp: dict):
             p["return_policy_id"] = st.text_input("Return Policy ID",
                 value=p.get("return_policy_id",""), key="pol_r_txt")
 
-    # Real eBay inventory location. eBay requires the actual merchantLocationKey, not the display name.
     locs = policies.get("locations", [])
     if locs:
-        loc_labels = [x.get("label") or x.get("key") for x in locs]
+        loc_labels = [x.get("label") or x.get("name") or x.get("key") for x in locs]
         current_key = p.get("merchant_location_key", "")
         current_idx = 0
-        for i, loc in enumerate(locs):
-            if loc.get("key") == current_key:
+        for i, x in enumerate(locs):
+            if x.get("key") == current_key:
                 current_idx = i
                 break
-        loc_sel = st.selectbox("Inventory Location", loc_labels, index=current_idx, key="loc_select")
-        selected_loc = locs[loc_labels.index(loc_sel)]
-        p["merchant_location_key"] = selected_loc.get("key", "")
+        loc_sel = st.selectbox("Inventory Location", loc_labels, index=current_idx, key="loc_key_select")
+        p["merchant_location_key"] = next(
+            (x.get("key") for x in locs if (x.get("label") or x.get("name") or x.get("key")) == loc_sel),
+            locs[0].get("key"),
+        )
         st.caption(f"Using merchantLocationKey: `{p['merchant_location_key']}`")
     else:
-        st.info("No eBay inventory location was found. The app will create a WAREHOUSE location automatically before upload using the address below.")
-        ca1, ca2, ca3 = st.columns([2, 2, 1])
-        auto_addr = policies.get("identity_address", {}) if isinstance(policies, dict) else {}
-        with ca1:
-            p["location_address_line1"] = st.text_input("Warehouse address", value=p.get("location_address_line1") or auto_addr.get("addressLine1", ""), key="loc_addr1")
-            p["location_city"] = st.text_input("City", value=p.get("location_city") or auto_addr.get("city", ""), key="loc_city")
-        with ca2:
-            p["location_state"] = st.text_input("State", value=p.get("location_state") or auto_addr.get("stateOrProvince", ""), key="loc_state")
-            p["location_postal_code"] = st.text_input("Postal / ZIP", value=p.get("location_postal_code") or auto_addr.get("postalCode", ""), key="loc_postal")
-        with ca3:
-            p["location_country"] = st.text_input("Country", value=p.get("location_country") or auto_addr.get("country", "US"), key="loc_country")
-        p["location_name"] = st.text_input("Location name", value=p.get("location_name", "Main Warehouse"), key="loc_name")
         p["merchant_location_key"] = "MAINWAREHOUSE"
-        st.caption("eBay will create/use merchantLocationKey `MAINWAREHOUSE`. Keys cannot be renamed after creation.")
+        st.info("No eBay inventory location was returned. The uploader will automatically create/use `MAINWAREHOUSE` as a warehouse location before publishing.")
 
     p["ebay_html"] = exp.get("description_html", "")
     st.session_state.edit_product = p
@@ -1052,7 +1043,7 @@ def _upload_panel(p: dict, exp: dict):
             with st.expander("Troubleshooting"):
                 st.markdown("""
 - **Policy IDs**: Must be valid policies from your own eBay account, matching the environment (sandbox policies won't work in production and vice versa)
-- **Merchant Location**: Must match a location key set up in eBay Seller Hub → Locations
+- **Inventory Location**: The app now auto-fetches or creates a real eBay warehouse location key before publishing
 - **Token**: If you reconnected eBay recently and still see auth errors, disconnect and reconnect in Settings
 - **Content-Language**: Handled automatically (en-US) — no action needed
                 """)
@@ -1103,30 +1094,47 @@ def _tab_store():
         st.info("No live listings found on your eBay store yet.")
         return
 
+    source_note = data.get("source", "eBay")
     st.markdown(f"<div style='font-size:12px;color:#718096;margin-bottom:12px;'>"
-                f"{data['total']} live listings · page {data['page']} of {data['total_pages']}</div>",
+                f"{data['total']} live listings · page {data['page']} of {data['total_pages']} · source: {source_note}</div>",
                 unsafe_allow_html=True)
 
     for item in data["items"]:
-        c1, c2, c3 = st.columns([4, 2, 2])
+        cimg, c1, c2, c3 = st.columns([1, 4, 2, 2])
+        with cimg:
+            if item.get("image_url"):
+                try:
+                    st.image(item.get("image_url"), width=64)
+                except Exception:
+                    st.markdown("📦")
+            else:
+                st.markdown("📦")
         with c1:
+            price_val = item.get('price') or '—'
+            qty_val = item.get('quantity')
+            qty_text = f"Qty: {qty_val}" if qty_val not in (None, '') else "Live listing"
             st.markdown(f"""
             <div class="store-row">
-              <div class="draft-title">{item['title'][:70]}</div>
+              <div class="draft-title">{item.get('title','Untitled Listing')[:90]}</div>
               <div class="draft-meta">
-                <span class="badge b-live">{item.get('status','ACTIVE')}</span>
-                <span>${item.get('price','—')}</span>
-                <span>Qty: {item.get('quantity', 0)}</span>
-                <span class="store-sku">SKU: {item.get('sku','')}</span>
+                <span class="badge b-live">{item.get('status','LIVE')}</span>
+                <span>${price_val}</span>
+                <span>{qty_text}</span>
+                <span class="store-sku">SKU/ID: {item.get('sku') or item.get('listing_id','')}</span>
               </div>
             </div>""", unsafe_allow_html=True)
         with c2:
             if item.get("listing_url"):
                 st.markdown(f"[🔗 View on eBay]({item['listing_url']})")
         with c3:
-            if st.button("✏️ Edit this listing", key=f"store_edit_{item['sku']}", use_container_width=True):
-                _open_editor_from_ebay(item["sku"])
+            edit_sku = str(item.get("sku") or "")
+            can_edit = bool(edit_sku) and edit_sku.isalnum() and len(edit_sku) <= 50 and data.get("source") == "inventory_offers"
+            btn_key = "store_edit_" + str(item.get("listing_id") or item.get("offer_id") or edit_sku)
+            if st.button("✏️ Edit this listing", key=btn_key, use_container_width=True, disabled=not can_edit):
+                _open_editor_from_ebay(edit_sku)
                 st.rerun()
+            if not can_edit:
+                st.caption("Live view only")
 
     st.markdown("---")
     _pagination(data["page"], data["total_pages"], "store", "store_page")
@@ -1142,7 +1150,7 @@ def render_products() -> None:
         drafts_count = _list_drafts_safe(page=1, page_size=1)["total"]
     except Exception as e:
         st.error(
-            f"⚠️ Could not load drafts from the database: {e}\n\n"
+            f"⚠️ Could not load saved drafts: {e}\n\n"
             "This usually means `core/draft_store.py` in this deployment is an older "
             "version, or the `product_drafts` table doesn't exist yet in Supabase. "
             "Drafts will not work correctly until this is fixed."

@@ -1,9 +1,9 @@
 """
-ebay_listings.py — Fetches the current user's LIVE eBay inventory/offers
-directly from eBay (not from our database), paginated, with no item cap.
+ebay_listings.py — Fetch real live eBay listings for the signed-in connected user.
 
-Used by the "My Store" tab so sellers can see what's already listed and
-pull any of them back into the draft editor to make changes.
+Uses public Browse seller search first (real active listings buyers can see), then
+falls back to Sell Inventory offers only when those offers have a real listingId.
+It intentionally does NOT show raw inventory-only SKUs as live store products.
 """
 
 import re
@@ -15,7 +15,7 @@ from core.ebay_account_store import get_valid_ebay_access_token
 
 def _owner_name() -> str:
     client_name = st.session_state.get("client_name") or ""
-    role        = st.session_state.get("role") or ""
+    role = st.session_state.get("role") or ""
     if client_name:
         return client_name.strip()
     if role == "ceo":
@@ -24,171 +24,20 @@ def _owner_name() -> str:
 
 
 def _resolve_env(account: dict) -> tuple[str, str]:
-    env      = account.get("environment", "production")
+    env = account.get("environment", "production")
     api_base = "https://api.sandbox.ebay.com" if env != "production" else "https://api.ebay.com"
     return env, api_base
-
-
 
 
 def _valid_ebay_sku(sku: str) -> bool:
     return bool(sku) and len(str(sku)) <= 50 and re.fullmatch(r"[A-Za-z0-9]+", str(sku)) is not None
 
+
 def _safe_title(text: str) -> str:
-    text = re.sub(r"(?s)<[^>]+>", " ", str(text or ""))
+    text = re.sub(r"(?is)<(script|style).*?>.*?</\\1>", " ", str(text or ""))
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
-def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
-    """
-    Fetches the current owner's live eBay offers (their actual store listings),
-    paginated using eBay's own offset/limit. No cap on total pages — eBay
-    sellers commonly have thousands of listings and this will page through
-    all of them.
-
-    Returns:
-        {
-          "success": bool,
-          "items": [ { sku, offerId, listingId, title, price, quantity,
-                       status, listingUrl, imageUrl }, ... ],
-          "total": int,
-          "page": int,
-          "page_size": int,
-          "total_pages": int,
-          "error": str | None,
-        }
-    """
-    owner = _owner_name()
-
-    try:
-        access_token, account = get_valid_ebay_access_token(owner)
-    except RuntimeError as e:
-        return _err(str(e))
-
-    env, api_base = _resolve_env(account)
-    marketplace   = account.get("marketplace_id", "EBAY_US")
-    seller_name   = account.get("ebay_username") or account.get("ebay_user_id") or ""
-
-    hdrs = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
-        "Accept-Language": "en-US",
-        "X-EBAY-C-MARKETPLACE-ID": marketplace,
-    }
-
-    offset = (page - 1) * page_size
-
-    try:
-        resp = requests.get(
-            f"{api_base}/sell/inventory/v1/offer",
-            headers=hdrs,
-            params={"limit": str(page_size), "offset": str(offset)},
-            timeout=30,
-        )
-    except Exception as e:
-        return _err(f"Could not reach eBay: {e}")
-
-    if resp.status_code >= 400:
-        # Offers only returns Inventory API offers. If the seller has old/manual live listings
-        # or bad legacy SKUs, fall back to Inventory Items / public seller search instead of showing demos or crashing.
-        return _fetch_inventory_items(api_base, hdrs, env, page, page_size, seller_name)
-
-    data  = resp.json()
-    total = data.get("total", 0)
-    offers = data.get("offers", [])
-    if not offers:
-        return _fetch_inventory_items(api_base, hdrs, env, page, page_size, seller_name)
-
-    items = []
-    for o in offers:
-        items.append({
-            "sku":         o.get("sku", ""),
-            "offer_id":    o.get("offerId", ""),
-            "listing_id":  o.get("listing", {}).get("listingId", ""),
-            "title":       _safe_title(o.get("listingDescription") or _title_from_sku(o.get("sku",""))),
-            "price":       (o.get("pricingSummary", {}).get("price", {}) or {}).get("value", ""),
-            "currency":    (o.get("pricingSummary", {}).get("price", {}) or {}).get("currency", "USD"),
-            "quantity":    o.get("availableQuantity", 0),
-            "status":      o.get("status", "") or o.get("listing", {}).get("listingStatus", ""),
-            "category_id": o.get("categoryId", ""),
-        })
-
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    listing_id_base = "https://www.ebay.com/itm/" if env == "production" else "https://sandbox.ebay.com/itm/"
-    for it in items:
-        it["listing_url"] = f"{listing_id_base}{it['listing_id']}" if it["listing_id"] else ""
-
-    return {
-        "success": True, "items": items, "total": total,
-        "page": page, "page_size": page_size, "total_pages": total_pages,
-        "environment": env, "error": None,
-    }
-
-
-def fetch_inventory_item(sku: str) -> dict:
-    sku = str(sku or "").strip()
-    if not _valid_ebay_sku(sku):
-        return {"success": False, "product": None, "error": "This existing eBay SKU contains characters this app/account cannot fetch safely. Create a new cleaned listing instead."}
-    """
-    Fetches full inventory item detail (images, description, aspects) for a
-    single SKU — used when a seller clicks "Edit" on a live listing so we can
-    pull it back into the draft editor with all fields populated.
-    """
-    owner = _owner_name()
-    try:
-        access_token, account = get_valid_ebay_access_token(owner)
-    except RuntimeError as e:
-        return {"success": False, "product": None, "error": str(e)}
-
-    env, api_base = _resolve_env(account)
-    marketplace   = account.get("marketplace_id", "EBAY_US")
-
-    hdrs = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
-        "Accept-Language": "en-US",
-        "X-EBAY-C-MARKETPLACE-ID": marketplace,
-    }
-
-    try:
-        resp = requests.get(f"{api_base}/sell/inventory/v1/inventory_item/{sku}", headers=hdrs, timeout=30)
-    except Exception as e:
-        return {"success": False, "product": None, "error": f"Could not reach eBay: {e}"}
-
-    if resp.status_code >= 400:
-        return {"success": False, "product": None, "error": _safe_text(resp)}
-
-    data    = resp.json()
-    product = data.get("product", {})
-
-    aspects = product.get("aspects", {}) or {}
-    specifications = {k: (v[0] if isinstance(v, list) and v else v) for k, v in aspects.items()}
-
-    return {
-        "success": True,
-        "product": {
-            "title":          product.get("title", ""),
-            "description":    product.get("description", ""),
-            "images":         product.get("imageUrls", []),
-            "brand":          product.get("brand", ""),
-            "sku":            sku,
-            "condition":      data.get("condition", "NEW").replace("_"," ").title(),
-            "specifications": specifications,
-            "quantity":       data.get("availability", {})
-                                   .get("shipToLocationAvailability", {})
-                                   .get("quantity", 1),
-            "status":         "live",
-            "_from_ebay_sku": sku,
-        },
-        "error": None,
-    }
-
-
-def _title_from_sku(sku: str) -> str:
-    return sku.rsplit("-", 1)[0].replace("-", " ") if sku else "Untitled Listing"
-
-def _err(msg: str) -> dict:
-    return {"success": False, "items": [], "total": 0, "page": 1,
-            "page_size": 25, "total_pages": 1, "environment": "", "error": msg}
 
 def _safe_text(resp) -> str:
     try:
@@ -201,114 +50,198 @@ def _safe_text(resp) -> str:
         return resp.text[:300]
 
 
-def _fetch_inventory_items(api_base: str, hdrs: dict, env: str, page: int = 1, page_size: int = 25, seller_name: str = "") -> dict:
-    """Fallback: show real inventory items from the connected eBay account when offers are unavailable/empty."""
-    offset = (page - 1) * page_size
-    try:
-        resp = requests.get(
-            f"{api_base}/sell/inventory/v1/inventory_item",
-            headers=hdrs,
-            params={"limit": str(page_size), "offset": str(offset)},
-            timeout=30,
-        )
-    except Exception as e:
-        return _err(f"Could not reach eBay inventory items: {e}")
+def _err(msg: str) -> dict:
+    return {"success": False, "items": [], "total": 0, "page": 1,
+            "page_size": 25, "total_pages": 1, "environment": "", "error": msg}
 
-    if resp.status_code >= 400:
-        return _err(_safe_text(resp))
 
-    data = resp.json() or {}
-    rows = data.get("inventoryItems", []) or []
-    total = int(data.get("total", len(rows)) or len(rows))
-    if not rows and seller_name:
-        return _fetch_public_seller_items(api_base, hdrs, env, seller_name, page, page_size)
+def _listing_url(env: str, listing_id: str) -> str:
+    if not listing_id:
+        return ""
+    return ("https://www.ebay.com/itm/" if env == "production" else "https://sandbox.ebay.com/itm/") + str(listing_id)
 
-    items = []
-    for row in rows:
-        sku = row.get("sku", "")
-        inv = row.get("inventoryItem", {}) or {}
-        product = inv.get("product", {}) or {}
-        availability = inv.get("availability", {}) or {}
-        qty = (availability.get("shipToLocationAvailability", {}) or {}).get("quantity", 0)
-        images = product.get("imageUrls", []) or []
-        items.append({
-            "sku": sku,
-            "offer_id": "",
-            "listing_id": "",
-            "title": _safe_title(product.get("title") or _title_from_sku(sku)),
-            "price": "",
-            "currency": "USD",
-            "quantity": qty,
-            "status": "INVENTORY ITEM",
-            "category_id": "",
-            "listing_url": "",
-            "image_url": images[0] if images else "",
-        })
 
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    return {
-        "success": True,
-        "items": items,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "total_pages": total_pages,
-        "environment": env,
-        "error": None,
-        "source": "inventory_items",
+def _seller_names(account: dict) -> list[str]:
+    names = []
+    for key in ("ebay_username", "ebay_user_id", "userId", "username"):
+        val = str(account.get(key) or "").strip()
+        if val and val not in names and val.lower() not in ("ebay account", "connected ebay account"):
+            names.append(val)
+    return names
+
+
+def _fetch_browse_seller_items(api_base: str, token: str, marketplace: str, env: str, seller: str, page: int, page_size: int) -> dict | None:
+    """Fetch real buyer-visible live listings for a seller using Browse API."""
+    if not seller or env != "production":
+        return None
+
+    hdrs = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "Accept-Language": "en-US",
+        "X-EBAY-C-MARKETPLACE-ID": marketplace,
     }
+    offset = (page - 1) * page_size
+
+    # Browse search supports seller filtering. q is intentionally broad so we get the seller's live items.
+    filter_value = f"sellers:{{{seller}}},buyingOptions:{{FIXED_PRICE|AUCTION}}"
+    attempts = [
+        {"q": "*", "filter": filter_value, "limit": str(page_size), "offset": str(offset)},
+        {"q": seller, "filter": filter_value, "limit": str(page_size), "offset": str(offset)},
+        {"filter": filter_value, "limit": str(page_size), "offset": str(offset)},
+    ]
+
+    for params in attempts:
+        try:
+            r = requests.get(f"{api_base}/buy/browse/v1/item_summary/search", headers=hdrs, params=params, timeout=30)
+        except Exception:
+            continue
+        if r.status_code >= 400:
+            continue
+        data = r.json() or {}
+        rows = data.get("itemSummaries") or []
+        items = []
+        for row in rows:
+            price = row.get("price") or row.get("currentBidPrice") or {}
+            seller_info = row.get("seller") or {}
+            listing_id = str(row.get("legacyItemId") or row.get("itemId") or "")
+            items.append({
+                "sku": row.get("sellerItemRevision") or row.get("itemId", ""),
+                "offer_id": "",
+                "listing_id": listing_id,
+                "title": _safe_title(row.get("title") or "Untitled Listing"),
+                "price": price.get("value", ""),
+                "currency": price.get("currency", "USD"),
+                "quantity": "",
+                "status": "LIVE",
+                "category_id": ((row.get("categories") or [{}])[0] or {}).get("categoryId", ""),
+                "listing_url": row.get("itemWebUrl") or _listing_url(env, row.get("legacyItemId", "")),
+                "image_url": ((row.get("image") or {}).get("imageUrl") or ""),
+                "seller_username": seller_info.get("username") or seller,
+            })
+        if rows or int(data.get("total", 0) or 0) > 0:
+            total = int(data.get("total", len(items)) or 0)
+            return {"success": True, "items": items, "total": total, "page": page,
+                    "page_size": page_size, "total_pages": max(1, (total + page_size - 1) // page_size),
+                    "environment": env, "error": None, "source": "browse"}
+    return None
 
 
-def _fetch_public_seller_items(api_base: str, hdrs: dict, env: str, seller_name: str, page: int = 1, page_size: int = 25) -> dict:
-    """Fallback for existing live listings that were not created through Inventory API."""
-    if env != "production" or not seller_name:
-        return _err("No Inventory API listings found for this connected eBay account.")
+def _fetch_inventory_offers(api_base: str, token: str, marketplace: str, env: str, page: int, page_size: int) -> dict:
+    """Fetch Sell Inventory offers, but only return offers that are actually published/listed."""
+    hdrs = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "Accept-Language": "en-US",
+        "X-EBAY-C-MARKETPLACE-ID": marketplace,
+    }
     offset = (page - 1) * page_size
     try:
-        resp = requests.get(
-            f"{api_base}/buy/browse/v1/item_summary/search",
-            headers=hdrs,
-            params={
-                "filter": f"sellers:{{{seller_name}}}",
-                "limit": str(min(page_size, 200)),
-                "offset": str(offset),
-            },
-            timeout=30,
-        )
+        resp = requests.get(f"{api_base}/sell/inventory/v1/offer", headers=hdrs,
+                            params={"limit": str(page_size), "offset": str(offset)}, timeout=30)
     except Exception as e:
-        return _err(f"Could not reach eBay Browse seller listings: {e}")
+        return _err(f"Could not reach eBay: {e}")
     if resp.status_code >= 400:
         return _err(_safe_text(resp))
+
     data = resp.json() or {}
-    rows = data.get("itemSummaries", []) or []
-    total = int(data.get("total", len(rows)) or len(rows))
+    offers = data.get("offers", []) or []
     items = []
-    for row in rows:
-        price = row.get("price", {}) or {}
-        img = row.get("image", {}) or {}
+    for o in offers:
+        listing = o.get("listing") or {}
+        listing_id = listing.get("listingId") or o.get("listingId") or ""
+        status = (o.get("status") or listing.get("listingStatus") or "").upper()
+        # Do not show inventory-only offers as live listings.
+        if not listing_id and status not in ("PUBLISHED", "LISTED", "ACTIVE"):
+            continue
+        title = _safe_title(o.get("listingDescription") or _title_from_sku(o.get("sku", "")))
+        price = (o.get("pricingSummary", {}).get("price", {}) or {})
         items.append({
-            "sku": row.get("legacyItemId") or row.get("itemId", ""),
-            "offer_id": "",
-            "listing_id": row.get("legacyItemId") or row.get("itemId", ""),
-            "title": _safe_title(row.get("title", "Untitled Listing")),
+            "sku": o.get("sku", ""),
+            "offer_id": o.get("offerId", ""),
+            "listing_id": listing_id,
+            "title": title or "Untitled Listing",
             "price": price.get("value", ""),
             "currency": price.get("currency", "USD"),
-            "quantity": "",
-            "status": "LIVE",
-            "category_id": "",
-            "listing_url": row.get("itemWebUrl", ""),
-            "image_url": img.get("imageUrl", ""),
+            "quantity": o.get("availableQuantity", ""),
+            "status": status or "LIVE",
+            "category_id": o.get("categoryId", ""),
+            "listing_url": _listing_url(env, listing_id),
+            "image_url": "",
         })
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    return {
-        "success": True,
-        "items": items,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "total_pages": total_pages,
-        "environment": env,
-        "error": None,
-        "source": "public_seller_search",
-    }
 
+    total = len(items)
+    return {"success": True, "items": items, "total": total, "page": page,
+            "page_size": page_size, "total_pages": max(1, (total + page_size - 1) // page_size),
+            "environment": env, "error": None, "source": "inventory_offers"}
+
+
+def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
+    owner = _owner_name()
+    try:
+        access_token, account = get_valid_ebay_access_token(owner)
+    except RuntimeError as e:
+        return _err(str(e))
+
+    env, api_base = _resolve_env(account)
+    marketplace = account.get("marketplace_id", "EBAY_US")
+
+    # First try real buyer-visible listings for the connected seller.
+    for seller in _seller_names(account):
+        browse = _fetch_browse_seller_items(api_base, access_token, marketplace, env, seller, page, page_size)
+        if browse and browse.get("success") and browse.get("items"):
+            return browse
+
+    # Fallback to Sell Inventory offers, but only published/listed offers.
+    offers = _fetch_inventory_offers(api_base, access_token, marketplace, env, page, page_size)
+    if offers.get("success") and offers.get("items"):
+        return offers
+
+    return {"success": True, "items": [], "total": 0, "page": page, "page_size": page_size,
+            "total_pages": 1, "environment": env, "error": None,
+            "source": "none"}
+
+
+def fetch_inventory_item(sku: str) -> dict:
+    sku = str(sku or "").strip()
+    if not _valid_ebay_sku(sku):
+        return {"success": False, "product": None, "error": "This SKU contains characters this eBay account rejects. Create a new cleaned listing instead."}
+
+    owner = _owner_name()
+    try:
+        access_token, account = get_valid_ebay_access_token(owner)
+    except RuntimeError as e:
+        return {"success": False, "product": None, "error": str(e)}
+
+    env, api_base = _resolve_env(account)
+    marketplace = account.get("marketplace_id", "EBAY_US")
+    hdrs = {"Authorization": f"Bearer {access_token}", "Accept": "application/json",
+            "Accept-Language": "en-US", "X-EBAY-C-MARKETPLACE-ID": marketplace}
+
+    try:
+        resp = requests.get(f"{api_base}/sell/inventory/v1/inventory_item/{sku}", headers=hdrs, timeout=30)
+    except Exception as e:
+        return {"success": False, "product": None, "error": f"Could not reach eBay: {e}"}
+    if resp.status_code >= 400:
+        return {"success": False, "product": None, "error": _safe_text(resp)}
+
+    data = resp.json() or {}
+    product = data.get("product", {}) or {}
+    aspects = product.get("aspects", {}) or {}
+    specifications = {k: (v[0] if isinstance(v, list) and v else v) for k, v in aspects.items()}
+    return {"success": True, "product": {
+        "title": product.get("title", ""),
+        "description": product.get("description", ""),
+        "images": product.get("imageUrls", []),
+        "brand": product.get("brand", ""),
+        "sku": sku,
+        "condition": data.get("condition", "NEW").replace("_", " ").title(),
+        "specifications": specifications,
+        "quantity": data.get("availability", {}).get("shipToLocationAvailability", {}).get("quantity", 1),
+        "status": "live",
+        "_from_ebay_sku": sku,
+    }, "error": None}
+
+
+def _title_from_sku(sku: str) -> str:
+    return sku.rsplit("-", 1)[0].replace("-", " ") if sku else "Untitled Listing"

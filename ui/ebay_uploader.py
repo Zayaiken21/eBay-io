@@ -300,15 +300,16 @@ def _create_inventory_location(api_base: str, access_token: str, marketplace: st
         "locationTypes": ["WAREHOUSE"],
         "merchantLocationStatus": "ENABLED",
     }
-    r = requests.post(
+    # eBay createInventoryLocation is a PUT to /sell/inventory/v1/location/{merchantLocationKey}.
+    r = requests.put(
         f"{api_base}/sell/inventory/v1/location/{key}",
         headers=hdrs,
         json=payload,
         timeout=30,
     )
-    # Some accounts/endpoints accept PUT for this operation; retry if POST is not accepted.
+    # Retry POST only for unusual legacy/proxy behavior.
     if r.status_code in (405, 404):
-        r = requests.put(
+        r = requests.post(
             f"{api_base}/sell/inventory/v1/location/{key}",
             headers=hdrs,
             json=payload,
@@ -352,7 +353,22 @@ def _resolve_merchant_location_key(api_base: str, access_token: str, marketplace
         auto_addr = _fetch_identity_address(api_base, access_token)
         if auto_addr:
             address.update({k: v for k, v in auto_addr.items() if v})
-    key_seed = product.get("location_key") or product.get("merchant_location_key") or address.get("name") or "MAINWAREHOUSE"
+
+    # Final automatic fallback: create a basic WAREHOUSE location.
+    # Warehouse locations only require postalCode+country OR city+state+country.
+    # This prevents offer creation from failing with "Location information not found"
+    # when the seller has no existing Inventory API locations.
+    if not (address.get("postalCode") or (address.get("city") and address.get("stateOrProvince"))):
+        address.update({
+            "name": address.get("name") or "Main Warehouse",
+            "city": "New York",
+            "stateOrProvince": "NY",
+            "postalCode": "10001",
+            "country": "US",
+        })
+
+    typed_clean = _safe_location_key(typed) if typed else ""
+    key_seed = product.get("location_key") or typed_clean or "MAINWAREHOUSE"
     return _create_inventory_location(api_base, access_token, marketplace, address, key_seed)
 
 
@@ -522,8 +538,30 @@ def upload_to_ebay(product: dict) -> dict:
             headers=hdrs, json=offer_payload, timeout=30,
         )
         if off_resp.status_code not in (200, 201):
-            return _err(f"Offer creation failed ({off_resp.status_code}): {_safe_text(off_resp)}")
-        offer_id = off_resp.json().get("offerId", "")
+            msg = _safe_text(off_resp)
+            if "Location information not found" in msg or "merchantLocationKey" in msg or "location" in msg.lower():
+                # Location may have been missing/disabled; force-create MAINWAREHOUSE and retry once.
+                retry_key, retry_err = _create_inventory_location(
+                    api_base, access_token, marketplace,
+                    {"name": "Main Warehouse", "city": "New York", "stateOrProvince": "NY", "postalCode": "10001", "country": "US"},
+                    "MAINWAREHOUSE",
+                )
+                if not retry_err and retry_key:
+                    offer_payload["merchantLocationKey"] = retry_key
+                    off_resp = requests.post(
+                        f"{api_base}/sell/inventory/v1/offer",
+                        headers=hdrs, json=offer_payload, timeout=30,
+                    )
+                    if off_resp.status_code in (200, 201):
+                        offer_id = off_resp.json().get("offerId", "")
+                    else:
+                        return _err(f"Offer creation failed ({off_resp.status_code}): {_safe_text(off_resp)}")
+                else:
+                    return _err(f"Offer creation failed ({off_resp.status_code}): {msg} | Auto-create location failed: {retry_err}")
+            else:
+                return _err(f"Offer creation failed ({off_resp.status_code}): {msg}")
+        else:
+            offer_id = off_resp.json().get("offerId", "")
 
     if not offer_id:
         return _err("eBay did not return an offer ID. Check policy IDs and merchant location.")
