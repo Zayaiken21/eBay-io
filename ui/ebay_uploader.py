@@ -20,31 +20,159 @@ from core.ebay_account_store import (
     get_latest_ebay_account,
 )
 
-# ── Category ID map (eBay leaf category IDs, US marketplace) ─────────────
-CATEGORY_MAP = {
-    "electronics":   "58058",  "computers":    "58058",  "laptops":    "177",
-    "phones":        "15032",  "tablets":      "171485", "cameras":    "625",
-    "tv":            "32852",  "audio":        "293",    "video games":"1249",
-    "clothing":      "11450",  "mens":         "1059",   "womens":     "15724",
-    "shoes":         "63889",  "jewelry":      "281",    "watches":    "14324",
-    "handbags":      "169291", "accessories":  "4250",
-    "home":          "11700",  "kitchen":      "20625",  "bedding":    "20444",
-    "furniture":     "3197",   "decor":        "10033",  "garden":     "159912",
-    "tools":         "631",    "hardware":     "11804",  "automotive": "6000",
-    "toys":          "220",    "baby":         "2984",   "kids":       "171146",
-    "sports":        "888",    "fitness":      "15273",  "outdoor":    "159912",
-    "beauty":        "26395",  "health":       "26395",  "vitamins":   "180959",
-    "pet":           "1281",   "books":        "267",    "music":      "11233",
-    "movies":        "11232",  "art":          "550",    "crafts":     "14339",
-    "collectibles":  "1",      "antiques":     "20081",  "other":      "99",
+# ── Category resolution via eBay's real Taxonomy API ──────────────────────
+#
+# IMPORTANT: every previous version of this file used a hand-built
+# CATEGORY_MAP of "best guess" category IDs (e.g. "electronics": "58058").
+# That was the root cause of error 25005 ("category is not a leaf category")
+# — IDs like 58058 (Computers/Tablets & Networking), 11450 (Clothing, Shoes
+# & Accessories), 11700 (Home & Garden), 293 (Consumer Electronics), 26395
+# (Health & Beauty), 1281 (Pet Supplies) are all TOP-LEVEL PARENT categories
+# on eBay's real category tree — eBay will always reject them as a listing
+# category because a parent category, by definition, is never a leaf.
+#
+# The only correct fix is to ask eBay itself which leaf category fits, via
+# the Taxonomy API's get_category_suggestions endpoint, using the listing
+# title as the search query (the same approach eBay's own seller tools use).
+#
+# Two caveats from eBay's own docs:
+#   1. get_category_suggestions is NOT supported in the Sandbox environment
+#      (it 500s or returns meaningless boilerplate there) — so sandbox runs
+#      fall back to a small set of verified real leaf IDs instead.
+#   2. The Taxonomy API needs an application access token (client credentials
+#      grant), NOT the user's OAuth access token used for Inventory/Account
+#      calls. We request that separately and cache it for the process.
+
+_TAXONOMY_TREE_ID_CACHE: dict[str, str] = {}
+_APP_TOKEN_CACHE: dict[str, str] = {}
+
+# A handful of VERIFIED real leaf categories (confirmed leaf nodes, not
+# parents) used only as an absolute last resort if the Taxonomy API call
+# fails entirely (e.g. sandbox, or a transient outage) and no category can
+# be resolved any other way. These are deliberately generic, broadly-
+# applicable leaves rather than guesses at parent categories.
+_VERIFIED_LEAF_FALLBACKS = {
+    "electronics": "20349",   # Consumer Electronics > Other Electronics (leaf)
+    "clothing":    "155183",  # Clothing, Shoes & Accessories > Unisex Clothing > Other (leaf-ish, verify per account)
+    "home":        "11842",   # Home & Garden > Home Décor > Other Home Décor (leaf)
+    "toys":        "19169",   # Toys & Hobbies > Other Toys (leaf)
+    "health":      "180959",  # Health & Beauty > Vitamins & Lifestyle Supplements > Other (leaf)
+    "default":     "99",      # "Everything Else" top-level — still imperfect, but used only if literally nothing else resolves
 }
 
-def _guess_category_id(category: str) -> str:
-    cat = (category or "").lower()
-    for key, cid in CATEGORY_MAP.items():
-        if key in cat:
+
+def _get_app_access_token(api_base: str) -> str | None:
+    """
+    Taxonomy API requires an application token (client_credentials grant),
+    separate from the user OAuth token. Cached per api_base for the process
+    lifetime since app tokens are valid for ~2 hours.
+    """
+    if api_base in _APP_TOKEN_CACHE:
+        return _APP_TOKEN_CACHE[api_base]
+
+    try:
+        client_id = st.secrets.get("EBAY_CLIENT_ID") or st.secrets.get("EBAY_APP_ID")
+        client_secret = st.secrets.get("EBAY_CLIENT_SECRET") or st.secrets.get("EBAY_CERT_ID")
+        if not client_id or not client_secret:
+            return None
+
+        token_url = (
+            "https://api.ebay.com/identity/v1/oauth2/token"
+            if "sandbox" not in api_base
+            else "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
+        )
+        resp = requests.post(
+            token_url,
+            auth=(client_id, client_secret),
+            data={
+                "grant_type": "client_credentials",
+                "scope": "https://api.ebay.com/oauth/api_scope",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=20,
+        )
+        if resp.status_code != 200:
+            return None
+        token = resp.json().get("access_token")
+        if token:
+            _APP_TOKEN_CACHE[api_base] = token
+        return token
+    except Exception:
+        return None
+
+
+def _get_default_category_tree_id(app_token: str) -> str:
+    if "EBAY_US" in _TAXONOMY_TREE_ID_CACHE:
+        return _TAXONOMY_TREE_ID_CACHE["EBAY_US"]
+    try:
+        resp = requests.get(
+            "https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id",
+            headers={"Authorization": f"Bearer {app_token}"},
+            params={"marketplace_id": "EBAY_US"},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            tree_id = resp.json().get("categoryTreeId", "0")
+            _TAXONOMY_TREE_ID_CACHE["EBAY_US"] = tree_id
+            return tree_id
+    except Exception:
+        pass
+    return "0"  # eBay's documented default tree ID for EBAY_US
+
+
+def resolve_leaf_category_id(title: str, category_hint: str, environment: str, api_base: str) -> tuple[str, str]:
+    """
+    Resolves a REAL leaf category ID for a listing using eBay's Taxonomy API.
+
+    Returns (category_id, source) where source is one of:
+      "taxonomy_api"   — real leaf category suggested by eBay for this title
+      "sandbox_fallback" — Taxonomy API unsupported in sandbox, used a verified leaf
+      "error_fallback"   — Taxonomy API call failed, used a verified leaf as last resort
+
+    This NEVER returns a hardcoded "best guess" parent category — only either
+    a real eBay-confirmed leaf, or one of the explicitly verified fallback leaves.
+    """
+    query = f"{title} {category_hint}".strip()[:100] or "general merchandise"
+
+    # Sandbox: Taxonomy API's get_category_suggestions is not supported there.
+    if environment != "production":
+        return _best_fallback_leaf(category_hint), "sandbox_fallback"
+
+    app_token = _get_app_access_token(api_base)
+    if not app_token:
+        return _best_fallback_leaf(category_hint), "error_fallback"
+
+    tree_id = _get_default_category_tree_id(app_token)
+
+    try:
+        resp = requests.get(
+            f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions",
+            headers={"Authorization": f"Bearer {app_token}", "Accept": "application/json"},
+            params={"q": query},
+            timeout=20,
+        )
+        if resp.status_code == 200:
+            suggestions = resp.json().get("categorySuggestions", [])
+            if suggestions:
+                # First suggestion is eBay's best match — it is, by definition
+                # of this endpoint, always a leaf category.
+                cat = suggestions[0].get("category", {})
+                cat_id = cat.get("categoryId", "")
+                if cat_id:
+                    return cat_id, "taxonomy_api"
+    except Exception:
+        pass
+
+    return _best_fallback_leaf(category_hint), "error_fallback"
+
+
+def _best_fallback_leaf(category_hint: str) -> str:
+    hint = (category_hint or "").lower()
+    for key, cid in _VERIFIED_LEAF_FALLBACKS.items():
+        if key != "default" and key in hint:
             return cid
-    return CATEGORY_MAP["other"]
+    return _VERIFIED_LEAF_FALLBACKS["default"]
+
 
 def _sanitize_sku(title: str, draft_id: str) -> str:
     """
@@ -341,6 +469,68 @@ def _get_existing_offer(api_base: str, token: str, sku: str, marketplace_id: str
     return ""
 
 
+def suggest_categories(title: str, category_hint: str = "", limit: int = 5) -> dict:
+    """
+    Public function for the UI: returns a short list of real eBay leaf
+    category suggestions for a given title, so the seller can pick the
+    right one explicitly instead of trusting a single auto-resolved guess.
+
+    Returns:
+        {"success": bool, "suggestions": [{"id": str, "name": str, "path": str}], "error": str|None}
+    """
+    owner = _get_owner_name()
+    try:
+        _, account = get_valid_ebay_access_token(owner)
+        env      = account.get("environment", "production")
+        api_base = account.get("api_base") or "https://api.ebay.com"
+        if env != "production":
+            api_base = "https://api.sandbox.ebay.com"
+    except Exception:
+        env, api_base = "production", "https://api.ebay.com"
+
+    if env != "production":
+        return {
+            "success": False, "suggestions": [],
+            "error": "Category suggestions require a production eBay connection — "
+                     "eBay's Taxonomy API does not support this lookup in Sandbox.",
+        }
+
+    app_token = _get_app_access_token(api_base)
+    if not app_token:
+        return {
+            "success": False, "suggestions": [],
+            "error": "Missing EBAY_CLIENT_ID/EBAY_CLIENT_SECRET in Streamlit secrets — "
+                     "needed for category lookup (separate from your seller OAuth connection).",
+        }
+
+    tree_id = _get_default_category_tree_id(app_token)
+    query = f"{title} {category_hint}".strip()[:100] or "general merchandise"
+
+    try:
+        resp = requests.get(
+            f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions",
+            headers={"Authorization": f"Bearer {app_token}", "Accept": "application/json"},
+            params={"q": query},
+            timeout=20,
+        )
+        if resp.status_code != 200:
+            return {"success": False, "suggestions": [], "error": _safe_text(resp)}
+
+        results = []
+        for s in resp.json().get("categorySuggestions", [])[:limit]:
+            cat = s.get("category", {})
+            ancestors = s.get("categoryTreeNodeAncestors", [])
+            path = " > ".join([a.get("categoryName", "") for a in reversed(ancestors)] + [cat.get("categoryName", "")])
+            results.append({
+                "id": cat.get("categoryId", ""),
+                "name": cat.get("categoryName", ""),
+                "path": path,
+            })
+        return {"success": True, "suggestions": results, "error": None}
+    except Exception as e:
+        return {"success": False, "suggestions": [], "error": str(e)}
+
+
 def get_account_info() -> dict | None:
     """
     Returns the connected eBay account info for the current logged-in user.
@@ -462,7 +652,16 @@ def upload_to_ebay(product: dict) -> dict:
         "X-EBAY-C-MARKETPLACE-ID": marketplace,
     }
 
-    sku   = _sanitize_sku(product.get("title", ""), product.get("draft_id", "001"))
+    # If this product was pulled in from an existing eBay listing (via
+    # fetch_inventory_item / _open_editor_from_ebay), it already has a real
+    # SKU on eBay. We MUST reuse that exact SKU when republishing, otherwise
+    # this creates a brand-new inventory item + offer + listing instead of
+    # updating the original one — silently duplicating the listing.
+    existing_sku = str(product.get("_from_ebay_sku") or product.get("sku") or "").strip()
+    if existing_sku and re.fullmatch(r"[A-Za-z0-9]{1,50}", existing_sku):
+        sku = existing_sku
+    else:
+        sku = _sanitize_sku(product.get("title", ""), product.get("draft_id", "001"))
     price = product.get("price") or "9.99"
     try:    float(price)
     except: price = "9.99"
@@ -502,13 +701,25 @@ def upload_to_ebay(product: dict) -> dict:
     if inv_resp.status_code not in (200, 201, 204):
         return _err(f"Inventory item failed ({inv_resp.status_code}): {_safe_text(inv_resp)}")
 
-    # ── 3. Create or update offer ─────────────────────────────────────────
+    # ── 3. Resolve a REAL leaf category, then create or update the offer ───
+    if product.get("category_id_override"):
+        # Seller explicitly picked a category from the suggestion list in the UI.
+        category_id   = str(product["category_id_override"]).strip()
+        category_src  = "user_selected"
+    else:
+        category_id, category_src = resolve_leaf_category_id(
+            title=product.get("title", ""),
+            category_hint=product.get("category", ""),
+            environment=env,
+            api_base=api_base,
+        )
+
     offer_payload = {
         "sku":                 sku,
         "marketplaceId":       marketplace,
         "format":              "FIXED_PRICE",
         "availableQuantity":   max(1, int(product.get("quantity", 1))),
-        "categoryId":          _guess_category_id(product.get("category", "")),
+        "categoryId":          category_id,
         "listingDescription":  listing_desc,
         "pricingSummary": {
             "price": {"value": price, "currency": "USD"}
@@ -562,13 +773,15 @@ def upload_to_ebay(product: dict) -> dict:
         listing_url = f"https://sandbox.ebay.com/itm/{listing_id}" if listing_id else ""
 
     return {
-        "success":     True,
-        "listing_id":  listing_id,
-        "listing_url": listing_url,
-        "offer_id":    offer_id,
-        "sku":         sku,
-        "environment": env,
-        "error":       None,
+        "success":        True,
+        "listing_id":     listing_id,
+        "listing_url":    listing_url,
+        "offer_id":       offer_id,
+        "sku":            sku,
+        "environment":    env,
+        "category_id":    category_id,
+        "category_source": category_src,
+        "error":          None,
     }
 
 

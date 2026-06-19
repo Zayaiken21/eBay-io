@@ -21,8 +21,8 @@ import streamlit.components.v1 as components
 from ui.scraper         import fetch_product_page
 from ui.ai_rewriter     import rewrite_title, rewrite_description, generate_tags, auto_seo_optimize
 from ui.ebay_formatter  import generate_ebay_html, generate_ebay_export
-from ui.ebay_uploader   import upload_to_ebay, get_seller_policies, get_account_info
-from ui.ebay_listings   import fetch_my_listings, fetch_inventory_item
+from ui.ebay_uploader   import upload_to_ebay, get_seller_policies, get_account_info, suggest_categories
+from ui.ebay_listings   import fetch_my_listings, fetch_inventory_item, delete_ebay_listing
 from core.draft_store   import save_draft, load_draft, list_drafts, delete_draft, duplicate_draft
 
 # get_last_error was added to draft_store.py for the Supabase-fallback banner.
@@ -177,6 +177,7 @@ def _init():
         "drafts_page":      1,
         "store_page":       1,
         "store_data":       None,
+        "category_suggestions": None,
         "bot_wall_blocked": False,
         "bot_wall_url":      "",
         "bot_wall_domain":   "",
@@ -766,6 +767,43 @@ def _tab_editor():
                                            key="ed_cond")
         with c3: p["category"] = st.text_input("Category", value=p.get("category",""), key="ed_cat")
 
+        # ── eBay leaf category picker ──────────────────────────────────
+        # Free-text "category" above is just a human label. eBay requires a
+        # specific numeric LEAF category ID for actual publishing — guessing
+        # this wrong is exactly what caused error 25005 ("not a leaf
+        # category") in earlier versions. This box lets the seller fetch
+        # real suggestions from eBay's Taxonomy API and lock one in.
+        cat_id_label = p.get("category_id_override", "")
+        cat_name_label = p.get("category_id_override_name", "")
+        if cat_id_label:
+            st.caption(f"✅ eBay category locked: **{cat_name_label}** (ID `{cat_id_label}`)")
+        else:
+            st.caption("⚠️ No eBay category selected yet — one will be auto-resolved at publish time, "
+                       "but picking one explicitly avoids surprises.")
+
+        cc1, cc2 = st.columns([4, 2])
+        with cc2:
+            if st.button("🔍 Find eBay Category", use_container_width=True, key="btn_find_cat"):
+                with st.spinner("Asking eBay for matching categories…"):
+                    result = suggest_categories(p.get("title",""), p.get("category",""))
+                if result["success"]:
+                    st.session_state.category_suggestions = result["suggestions"]
+                else:
+                    st.session_state.category_suggestions = []
+                    st.warning(f"⚠️ {result['error']}")
+
+        suggestions = st.session_state.get("category_suggestions") or []
+        if suggestions:
+            with cc1:
+                options = {f"{s['name']}  ·  {s['path']}  (ID {s['id']})": s for s in suggestions}
+                picked = st.selectbox("Select the matching eBay category", list(options.keys()), key="cat_pick")
+                if st.button("✅ Use this category", key="btn_use_cat"):
+                    chosen = options[picked]
+                    p["category_id_override"] = chosen["id"]
+                    p["category_id_override_name"] = chosen["name"]
+                    st.session_state.category_suggestions = []
+                    st.rerun()
+
         c4, c5 = st.columns(2)
         with c4: p["brand"] = st.text_input("Brand", value=p.get("brand",""), key="ed_brand")
         with c5: p["sku"]   = st.text_input("SKU",   value=p.get("sku",""),   key="ed_sku")
@@ -1113,18 +1151,27 @@ def _upload_panel(p: dict, exp: dict):
     if ur:
         if ur.get("success"):
             env_lbl = "Sandbox" if ur.get("environment","production") != "production" else "Live"
+            cat_src_label = {
+                "taxonomy_api": "✅ matched by eBay's category finder",
+                "user_selected": "✅ category you selected",
+                "sandbox_fallback": "⚠️ sandbox placeholder category",
+                "error_fallback": "⚠️ fallback category — consider picking one explicitly above",
+            }.get(ur.get("category_source",""), "")
             st.markdown(f"""
             <div class="listing-success">
               <div style="font-size:32px;margin-bottom:8px;">🎉</div>
               <div class="ls-id">{ur.get('listing_id','')}</div>
               <div class="ls-sub">Published to eBay {env_lbl} · SKU: {ur.get('sku','')}</div>
             </div>""", unsafe_allow_html=True)
+            if ur.get("category_id"):
+                st.caption(f"Category used: `{ur['category_id']}` — {cat_src_label}")
             if ur.get("listing_url"):
                 st.markdown(f"\n🔗 **[View your listing on eBay]({ur['listing_url']})**")
         else:
             st.error(f"❌ Upload failed: {ur['error']}")
             with st.expander("Troubleshooting"):
                 st.markdown("""
+- **Category errors (25005 "not a leaf category")**: Click **🔍 Find eBay Category** above and explicitly pick a real leaf category before publishing — don't rely on auto-resolution for unusual products.
 - **Policy IDs**: Must be valid policies from your own eBay account, matching the environment (sandbox policies won't work in production and vice versa)
 - **Merchant Location**: Must match a location key set up in eBay Seller Hub → Locations
 - **Token**: If you reconnected eBay recently and still see auth errors, disconnect and reconnect in Settings
@@ -1182,7 +1229,8 @@ def _tab_store():
                 unsafe_allow_html=True)
 
     for item in data["items"]:
-        c1, c2, c3 = st.columns([4, 2, 2])
+        listing_id = item.get("listing_id", "")
+        c1, c2, c3, c4 = st.columns([4, 2, 2, 2])
         with c1:
             st.markdown(f"""
             <div class="store-row">
@@ -1198,9 +1246,34 @@ def _tab_store():
             if item.get("listing_url"):
                 st.markdown(f"[🔗 View on eBay]({item['listing_url']})")
         with c3:
-            if st.button("✏️ Edit this listing", key=f"store_edit_{item['sku']}", use_container_width=True):
+            if st.button("✏️ Edit", key=f"store_edit_{item['sku']}", use_container_width=True):
                 _open_editor_from_ebay(item["sku"])
                 st.rerun()
+        with c4:
+            confirm_key = f"confirm_del_{listing_id}"
+            if st.session_state.get(confirm_key):
+                cd1, cd2 = st.columns(2)
+                with cd1:
+                    if st.button("✅ Confirm", key=f"yes_del_{listing_id}", use_container_width=True):
+                        with st.spinner("Ending listing on eBay…"):
+                            result = delete_ebay_listing(listing_id)
+                        if result["success"]:
+                            st.success("Listing ended on eBay.")
+                            st.session_state.store_data = None
+                            st.session_state[confirm_key] = False
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {result['error']}")
+                            st.session_state[confirm_key] = False
+                with cd2:
+                    if st.button("✖ Cancel", key=f"no_del_{listing_id}", use_container_width=True):
+                        st.session_state[confirm_key] = False
+                        st.rerun()
+            else:
+                if st.button("🗑️ Delete", key=f"del_{listing_id}", use_container_width=True,
+                             help="Permanently ends this listing on eBay — cannot be undone"):
+                    st.session_state[confirm_key] = True
+                    st.rerun()
 
     st.markdown("---")
     _pagination(data["page"], data["total_pages"], "store", "store_page")

@@ -267,6 +267,81 @@ def fetch_inventory_item(sku: str) -> dict:
     }
 
 
+def delete_ebay_listing(listing_id: str) -> dict:
+    """
+    Ends a live eBay listing using the Trading API's EndFixedPriceItem call.
+
+    Why EndFixedPriceItem and not the Inventory API: the Inventory API has
+    no direct "delete a published offer" call that immediately removes the
+    item from the live store — withdrawOffer only works on unpublished
+    offers. EndFixedPriceItem is eBay's documented, correct way to end a
+    LIVE fixed-price listing (which is what this app always creates, since
+    upload_to_ebay always uses format=FIXED_PRICE).
+
+    EndingReason "NotAvailable" is the standard reason for a seller-initiated
+    removal when the item simply isn't for sale anymore (vs. price/listing
+    errors or items being sold elsewhere) and requires no special handling
+    for bids, since fixed-price listings have no bidding.
+
+    Returns: {"success": bool, "listing_id": str, "error": str|None}
+    """
+    listing_id = str(listing_id or "").strip()
+    if not listing_id:
+        return {"success": False, "listing_id": "", "error": "No listing ID provided."}
+
+    owner = _owner_name()
+    try:
+        access_token, account = get_valid_ebay_access_token(owner)
+    except RuntimeError as e:
+        return {"success": False, "listing_id": listing_id, "error": str(e)}
+
+    env, _, trading_url = _resolve_env(account)
+
+    headers = {
+        "X-EBAY-API-CALL-NAME": "EndFixedPriceItem",
+        "X-EBAY-API-SITEID": "0",
+        "X-EBAY-API-COMPATIBILITY-LEVEL": "1193",
+        "X-EBAY-API-IAF-TOKEN": access_token,
+        "Content-Type": "text/xml",
+    }
+    body = f"""<?xml version="1.0" encoding="utf-8"?>
+<EndFixedPriceItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials/>
+  <ItemID>{listing_id}</ItemID>
+  <EndingReason>NotAvailable</EndingReason>
+  <ErrorLanguage>en_US</ErrorLanguage>
+  <WarningLevel>High</WarningLevel>
+</EndFixedPriceItemRequest>"""
+
+    try:
+        resp = requests.post(trading_url, headers=headers, data=body.encode("utf-8"), timeout=30)
+    except Exception as e:
+        return {"success": False, "listing_id": listing_id, "error": f"Could not reach eBay: {e}"}
+
+    if resp.status_code >= 400:
+        return {"success": False, "listing_id": listing_id, "error": _safe_resp(resp)}
+
+    try:
+        root = ET.fromstring(resp.text)
+    except Exception as e:
+        return {"success": False, "listing_id": listing_id, "error": f"Could not parse eBay response: {e}"}
+
+    ns = {"e": "urn:ebay:apis:eBLBaseComponents"}
+    ack = _txt(root.find("e:Ack", ns))
+
+    if ack and ack.lower() in ("success", "warning"):
+        return {"success": True, "listing_id": listing_id, "error": None}
+
+    errs = []
+    for err in root.findall(".//e:Errors", ns):
+        msg = _txt(err.find("e:LongMessage", ns)) or _txt(err.find("e:ShortMessage", ns))
+        code = _txt(err.find("e:ErrorCode", ns))
+        if msg:
+            errs.append(f"{code}: {msg}" if code else msg)
+
+    return {"success": False, "listing_id": listing_id, "error": "; ".join(errs) or "Could not end this listing."}
+
+
 def _txt(node) -> str:
     return node.text.strip() if node is not None and node.text else ""
 
