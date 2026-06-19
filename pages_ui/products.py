@@ -966,8 +966,8 @@ def _upload_panel(p: dict, exp: dict):
     try:
         info = get_account_info()
     except Exception as e:
-        st.error(f"❌ Could not read eBay account from Supabase: {e}")
-        st.caption(f"Resolved owner_name: `{owner}` · Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in secrets.")
+        st.error(f"❌ Could not read eBay account: {e}")
+        st.caption(f"Resolved owner_name: `{owner}`")
         return
 
     if not info:
@@ -1043,12 +1043,45 @@ def _upload_panel(p: dict, exp: dict):
             p["return_policy_id"] = st.text_input("Return Policy ID",
                 value=p.get("return_policy_id",""), key="pol_r_txt")
 
-    p["merchant_location_key"] = st.text_input(
-        "Merchant Location Key",
-        value=p.get("merchant_location_key","default"),
-        key="loc_key",
-        help="Set up in eBay Seller Hub → Locations. Usually 'default' for single-location sellers."
-    )
+    locs = policies.get("locations", []) or []
+    enabled_locs = [x for x in locs if x.get("enabled", True)]
+    if enabled_locs:
+        labels = [f"{x.get('name') or x.get('key')} · key: {x.get('key')}" for x in enabled_locs]
+        current_key = p.get("merchant_location_key", "")
+        current_idx = 0
+        for i, x in enumerate(enabled_locs):
+            if x.get("key") == current_key:
+                current_idx = i
+                break
+        sel = st.selectbox(
+            "Inventory Location",
+            labels,
+            index=current_idx,
+            key="loc_select",
+            help="This uses the real eBay merchantLocationKey returned by Inventory API."
+        )
+        p["merchant_location_key"] = enabled_locs[labels.index(sel)]["key"]
+        st.caption(f"Using real merchantLocationKey: `{p['merchant_location_key']}`")
+    else:
+        st.info("No enabled eBay inventory location was returned. The app will create/use `MAINWAREHOUSE` automatically before publishing.")
+        p["merchant_location_key"] = "MAINWAREHOUSE"
+
+        st.markdown("**Warehouse address for automatic eBay location creation**")
+        ca, cb = st.columns([2, 1])
+        with ca:
+            p["warehouse_address"] = st.text_input("Warehouse address", value=p.get("warehouse_address", "2083 e 19th St"), key="wh_addr")
+        with cb:
+            p["warehouse_name"] = st.text_input("Location name", value=p.get("warehouse_name", "Main Warehouse"), key="wh_name")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            p["warehouse_city"] = st.text_input("City", value=p.get("warehouse_city", "Brooklyn"), key="wh_city")
+        with c2:
+            p["warehouse_state"] = st.text_input("State", value=p.get("warehouse_state", "NY"), key="wh_state")
+        with c3:
+            p["warehouse_postal"] = st.text_input("Postal / ZIP", value=p.get("warehouse_postal", "11229"), key="wh_zip")
+        with c4:
+            p["warehouse_country"] = st.text_input("Country", value=p.get("warehouse_country", "US"), key="wh_country")
+        st.caption("eBay will create/use merchantLocationKey `MAINWAREHOUSE`. Keys cannot be renamed after creation.")
 
     p["ebay_html"] = exp.get("description_html", "")
     st.session_state.edit_product = p
@@ -1070,6 +1103,8 @@ def _upload_panel(p: dict, exp: dict):
             p["status"]           = "live"
             p["ebay_listing_id"]  = result["listing_id"]
             p["ebay_listing_url"] = result["listing_url"]
+            if result.get("merchant_location_key"):
+                p["merchant_location_key"] = result["merchant_location_key"]
             save_draft(p, did)
             st.session_state.edit_product = p
         st.rerun()
