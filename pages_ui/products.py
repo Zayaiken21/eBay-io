@@ -181,9 +181,24 @@ def _init():
         "bot_wall_blocked": False,
         "bot_wall_url":      "",
         "bot_wall_domain":   "",
+        "_prod_owner_key":   None,
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
+    # Clear cached store/policy data when switching from CEO to a client
+    # token account, or from one client to another. Without this, Streamlit
+    # session cache can keep showing the previous user's live eBay listings.
+    current_owner = (
+        (st.session_state.get("client_name") or "").strip()
+        or ("ceo" if (st.session_state.get("role") or "").lower() == "ceo" else "default")
+    )
+    if st.session_state.get("_prod_owner_key") != current_owner:
+        st.session_state["_prod_owner_key"] = current_owner
+        st.session_state["store_data"] = None
+        st.session_state["store_page"] = 1
+        st.session_state["policies"] = None
+        st.session_state["upload_result"] = None
 
 def _owner() -> str:
     """Resolve owner — matches session.py exactly (client_name or 'ceo')."""
@@ -191,7 +206,7 @@ def _owner() -> str:
     role        = st.session_state.get("role") or ""
     if client_name:
         return client_name.strip()
-    if role == "ceo":
+    if str(role).lower() == "ceo":
         return "ceo"
     return "default"
 
@@ -1198,8 +1213,12 @@ def _tab_store():
         st.error(f"❌ {data['error']}")
         return
 
+    if data.get("notice"):
+        st.info(data["notice"])
+        return
+
     if data["total"] == 0:
-        st.info("No live listings found on your eBay store yet.")
+        st.info("No live listings found on this signed-in user's connected eBay store yet.")
         return
 
     st.markdown(f"<div style='font-size:12px;color:#718096;margin-bottom:12px;'>"

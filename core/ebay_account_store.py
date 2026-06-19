@@ -198,31 +198,34 @@ def _decode_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_latest_ebay_account(owner_name: str, environment: str | None = None) -> dict[str, Any] | None:
+    """Return the eBay account saved for this exact app user only.
+
+    Tenant-isolation rule: never fall back to the shared/legacy "default"
+    eBay account for a client user. That fallback is what caused client token
+    accounts to see the CEO store listings in Product Manager → My Store.
+    """
     if not _using_supabase():
         return None
 
     owner = _normal_owner(owner_name)
-    owners_to_try = [owner]
-    if owner != "default":
-        owners_to_try.append("default")
+    params = {
+        "owner_name": f"eq.{owner}",
+        "select": "*",
+        "order": "updated_at.desc,id.desc",
+        "limit": "1",
+    }
+    if environment:
+        params["environment"] = f"eq.{environment}"
 
-    for current_owner in owners_to_try:
-        params = {
-            "owner_name": f"eq.{current_owner}",
-            "select": "*",
-            "order": "updated_at.desc,id.desc",
-            "limit": "1",
-        }
-        if environment:
-            params["environment"] = f"eq.{environment}"
+    response = requests.get(_table_url(), headers=_headers(), params=params, timeout=30)
+    if response.status_code >= 400:
+        raise RuntimeError(f"Supabase load failed: {response.status_code} {response.text}")
 
-        response = requests.get(_table_url(), headers=_headers(), params=params, timeout=30)
-        if response.status_code >= 400:
-            raise RuntimeError(f"Supabase load failed: {response.status_code} {response.text}")
-
-        rows = response.json()
-        if rows:
-            return _decode_row(rows[0])
+    rows = response.json()
+    if rows:
+        row = _decode_row(rows[0])
+        row["_resolved_owner"] = owner
+        return row
 
     return None
 

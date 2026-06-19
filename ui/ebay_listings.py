@@ -21,9 +21,43 @@ def _owner_name() -> str:
     role        = st.session_state.get("role") or ""
     if client_name:
         return client_name.strip()
-    if role == "ceo":
+    if str(role).lower() == "ceo":
         return "ceo"
     return "default"
+
+
+def _expected_owner_name() -> str:
+    """Return the signed-in app owner that must own the eBay connection.
+
+    IMPORTANT: client accounts must never fall back to the CEO/default eBay
+    connection for My Store listings. If a client has not connected eBay, we
+    show an empty/not-connected state instead of showing another seller's store.
+    """
+    return _owner_name()
+
+
+def _account_owner(account: dict) -> str:
+    return str((account or {}).get("owner_name") or (account or {}).get("_resolved_owner") or "").strip()
+
+
+def _owns_this_ebay_account(account: dict, expected_owner: str) -> bool:
+    actual = _account_owner(account)
+    expected = str(expected_owner or "").strip()
+    return bool(actual and expected and actual.lower() == expected.lower())
+
+
+def _not_connected_for_owner(owner: str, page_size: int = 25) -> dict:
+    return {
+        "success": True,
+        "items": [],
+        "total": 0,
+        "page": 1,
+        "page_size": page_size,
+        "total_pages": 1,
+        "environment": "",
+        "error": None,
+        "notice": f"No eBay account connected for {owner}. Connect this user's own eBay account in Settings to show their live store listings.",
+    }
 
 
 def _resolve_env(account: dict) -> tuple[str, str, str]:
@@ -39,6 +73,12 @@ def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
         access_token, account = get_valid_ebay_access_token(owner)
     except RuntimeError as e:
         return _err(str(e), page_size=page_size)
+
+    # Hard isolation: get_valid_ebay_access_token() may support legacy fallback
+    # rows such as "default". That is OK for old admin workflows, but My Store
+    # must never show the CEO/default store inside a client token account.
+    if not _owns_this_ebay_account(account, owner):
+        return _not_connected_for_owner(owner, page_size=page_size)
 
     env, api_base, trading_url = _resolve_env(account)
     marketplace = account.get("marketplace_id", "EBAY_US")
@@ -229,6 +269,9 @@ def fetch_inventory_item(sku: str, listing_id: str = "") -> dict:
         access_token, account = get_valid_ebay_access_token(owner)
     except RuntimeError as e:
         return {"success": False, "product": None, "error": str(e)}
+
+    if not _owns_this_ebay_account(account, owner):
+        return {"success": False, "product": None, "error": f"No eBay account connected for {owner}. Connect this user's own eBay account in Settings before editing live listings."}
 
     env, api_base, trading_url = _resolve_env(account)
     marketplace = account.get("marketplace_id", "EBAY_US")
