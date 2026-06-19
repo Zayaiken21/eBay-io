@@ -9,7 +9,6 @@ pull any of them back into the draft editor to make changes.
 import re
 import requests
 import streamlit as st
-from urllib.parse import quote
 
 from core.ebay_account_store import get_valid_ebay_access_token
 
@@ -67,6 +66,7 @@ def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
 
     env, api_base = _resolve_env(account)
     marketplace   = account.get("marketplace_id", "EBAY_US")
+    seller_name   = account.get("ebay_username") or account.get("ebay_user_id") or ""
 
     hdrs = {
         "Authorization": f"Bearer {access_token}",
@@ -88,14 +88,15 @@ def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
         return _err(f"Could not reach eBay: {e}")
 
     if resp.status_code >= 400:
-        msg = _safe_text(resp)
-        if "25707" in msg or "invalid value for a SKU" in msg.lower():
-            return _fetch_inventory_items(api_base, hdrs, env, page, page_size)
-        return _err(msg)
+        # Offers only returns Inventory API offers. If the seller has old/manual live listings
+        # or bad legacy SKUs, fall back to Inventory Items / public seller search instead of showing demos or crashing.
+        return _fetch_inventory_items(api_base, hdrs, env, page, page_size, seller_name)
 
     data  = resp.json()
     total = data.get("total", 0)
     offers = data.get("offers", [])
+    if not offers:
+        return _fetch_inventory_items(api_base, hdrs, env, page, page_size, seller_name)
 
     items = []
     for o in offers:
@@ -123,61 +124,10 @@ def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
     }
 
 
-
-def _fetch_inventory_items(api_base: str, hdrs: dict, env: str, page: int, page_size: int) -> dict:
-    """Fallback listing reader that uses Inventory Items directly when Offers fails."""
-    offset = (max(1, int(page or 1)) - 1) * max(1, int(page_size or 25))
-    try:
-        resp = requests.get(
-            f"{api_base}/sell/inventory/v1/inventory_item",
-            headers=hdrs,
-            params={"limit": str(page_size), "offset": str(offset)},
-            timeout=30,
-        )
-    except Exception as e:
-        return _err(f"Could not reach eBay inventory: {e}")
-
-    if resp.status_code >= 400:
-        return _err(_safe_text(resp))
-
-    try:
-        data = resp.json()
-    except Exception:
-        return _err("eBay returned an unreadable inventory response.")
-
-    rows = data.get("inventoryItems", []) or []
-    total = int(data.get("total", offset + len(rows)) or 0)
-    items = []
-    for row in rows:
-        sku = str(row.get("sku", "") or "")
-        inv = row.get("inventoryItem", {}) or {}
-        prod = inv.get("product", {}) or {}
-        qty = (inv.get("availability", {}) or {}).get("shipToLocationAvailability", {}).get("quantity", 0)
-        title = _safe_title(prod.get("title") or _title_from_sku(sku))
-        items.append({
-            "sku": sku,
-            "offer_id": "",
-            "listing_id": "",
-            "title": title,
-            "price": "",
-            "currency": "USD",
-            "quantity": qty,
-            "status": "INVENTORY",
-            "category_id": "",
-            "listing_url": "",
-            "image_url": (prod.get("imageUrls") or [""])[0] if isinstance(prod.get("imageUrls"), list) else "",
-        })
-
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    return {
-        "success": True, "items": items, "total": total,
-        "page": page, "page_size": page_size, "total_pages": total_pages,
-        "environment": env, "error": None,
-        "source": "inventory_items",
-    }
-
 def fetch_inventory_item(sku: str) -> dict:
     sku = str(sku or "").strip()
+    if not _valid_ebay_sku(sku):
+        return {"success": False, "product": None, "error": "This existing eBay SKU contains characters this app/account cannot fetch safely. Create a new cleaned listing instead."}
     """
     Fetches full inventory item detail (images, description, aspects) for a
     single SKU — used when a seller clicks "Edit" on a live listing so we can
@@ -200,7 +150,7 @@ def fetch_inventory_item(sku: str) -> dict:
     }
 
     try:
-        resp = requests.get(f"{api_base}/sell/inventory/v1/inventory_item/{quote(sku, safe='')}", headers=hdrs, timeout=30)
+        resp = requests.get(f"{api_base}/sell/inventory/v1/inventory_item/{sku}", headers=hdrs, timeout=30)
     except Exception as e:
         return {"success": False, "product": None, "error": f"Could not reach eBay: {e}"}
 
@@ -249,3 +199,116 @@ def _safe_text(resp) -> str:
         return data.get("error_description") or data.get("message") or resp.text[:300]
     except Exception:
         return resp.text[:300]
+
+
+def _fetch_inventory_items(api_base: str, hdrs: dict, env: str, page: int = 1, page_size: int = 25, seller_name: str = "") -> dict:
+    """Fallback: show real inventory items from the connected eBay account when offers are unavailable/empty."""
+    offset = (page - 1) * page_size
+    try:
+        resp = requests.get(
+            f"{api_base}/sell/inventory/v1/inventory_item",
+            headers=hdrs,
+            params={"limit": str(page_size), "offset": str(offset)},
+            timeout=30,
+        )
+    except Exception as e:
+        return _err(f"Could not reach eBay inventory items: {e}")
+
+    if resp.status_code >= 400:
+        return _err(_safe_text(resp))
+
+    data = resp.json() or {}
+    rows = data.get("inventoryItems", []) or []
+    total = int(data.get("total", len(rows)) or len(rows))
+    if not rows and seller_name:
+        return _fetch_public_seller_items(api_base, hdrs, env, seller_name, page, page_size)
+
+    items = []
+    for row in rows:
+        sku = row.get("sku", "")
+        inv = row.get("inventoryItem", {}) or {}
+        product = inv.get("product", {}) or {}
+        availability = inv.get("availability", {}) or {}
+        qty = (availability.get("shipToLocationAvailability", {}) or {}).get("quantity", 0)
+        images = product.get("imageUrls", []) or []
+        items.append({
+            "sku": sku,
+            "offer_id": "",
+            "listing_id": "",
+            "title": _safe_title(product.get("title") or _title_from_sku(sku)),
+            "price": "",
+            "currency": "USD",
+            "quantity": qty,
+            "status": "INVENTORY ITEM",
+            "category_id": "",
+            "listing_url": "",
+            "image_url": images[0] if images else "",
+        })
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    return {
+        "success": True,
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "environment": env,
+        "error": None,
+        "source": "inventory_items",
+    }
+
+
+def _fetch_public_seller_items(api_base: str, hdrs: dict, env: str, seller_name: str, page: int = 1, page_size: int = 25) -> dict:
+    """Fallback for existing live listings that were not created through Inventory API."""
+    if env != "production" or not seller_name:
+        return _err("No Inventory API listings found for this connected eBay account.")
+    offset = (page - 1) * page_size
+    try:
+        resp = requests.get(
+            f"{api_base}/buy/browse/v1/item_summary/search",
+            headers=hdrs,
+            params={
+                "filter": f"sellers:{{{seller_name}}}",
+                "limit": str(min(page_size, 200)),
+                "offset": str(offset),
+            },
+            timeout=30,
+        )
+    except Exception as e:
+        return _err(f"Could not reach eBay Browse seller listings: {e}")
+    if resp.status_code >= 400:
+        return _err(_safe_text(resp))
+    data = resp.json() or {}
+    rows = data.get("itemSummaries", []) or []
+    total = int(data.get("total", len(rows)) or len(rows))
+    items = []
+    for row in rows:
+        price = row.get("price", {}) or {}
+        img = row.get("image", {}) or {}
+        items.append({
+            "sku": row.get("legacyItemId") or row.get("itemId", ""),
+            "offer_id": "",
+            "listing_id": row.get("legacyItemId") or row.get("itemId", ""),
+            "title": _safe_title(row.get("title", "Untitled Listing")),
+            "price": price.get("value", ""),
+            "currency": price.get("currency", "USD"),
+            "quantity": "",
+            "status": "LIVE",
+            "category_id": "",
+            "listing_url": row.get("itemWebUrl", ""),
+            "image_url": img.get("imageUrl", ""),
+        })
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    return {
+        "success": True,
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "environment": env,
+        "error": None,
+        "source": "public_seller_search",
+    }
+

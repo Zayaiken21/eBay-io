@@ -4,14 +4,12 @@ products.py — Pro seller product manager. Per-user, paginated, no item caps.
 Auth: owner = st.session_state.client_name (client login) or "ceo" (CEO login),
       matching session.py exactly. Every draft/listing query is scoped to this owner.
 
-Drafts: stored in Supabase via core.draft_store — never a local file, so every
-        Streamlit Cloud replica and every redeploy sees the same per-user data.
+Drafts: stored through core.draft_store with per-user isolation.
 
 My Store: pulls LIVE listings directly from eBay's API (not our database) so
           sellers can see and edit what's already posted.
 
-eBay upload: core.ebay_account_store handles token refresh — always fresh,
-             never a stale "please sign in" when already connected.
+eBay upload: core.ebay_account_store handles connected-account token refresh.
 """
 
 import re
@@ -483,7 +481,7 @@ def _tab_drafts():
         result = _list_drafts_safe(page=page, page_size=PAGE_SIZE)
     except Exception as e:
         st.error(f"⚠️ Could not load drafts: {e}")
-        st.caption("Check that `core/draft_store.py` is the latest version and the `product_drafts` table exists in Supabase.")
+        st.caption("Check that `core/draft_store.py` is present and writable for the signed-in user.")
         return
     drafts = result["items"]
 
@@ -904,8 +902,8 @@ def _upload_panel(p: dict, exp: dict):
     try:
         info = get_account_info()
     except Exception as e:
-        st.error(f"❌ Could not read eBay account: {e}")
-        st.caption(f"Resolved owner_name: `{owner}` · Check that this signed-in user connected eBay in Settings.")
+        st.error(f"❌ Could not read connected eBay account: {e}")
+        st.caption(f"Resolved owner_name: `{owner}` · reconnect eBay in Settings if needed.")
         return
 
     if not info:
@@ -981,28 +979,35 @@ def _upload_panel(p: dict, exp: dict):
             p["return_policy_id"] = st.text_input("Return Policy ID",
                 value=p.get("return_policy_id",""), key="pol_r_txt")
 
+    # Real eBay inventory location. eBay requires the actual merchantLocationKey, not the display name.
     locs = policies.get("locations", [])
     if locs:
-        current_key = str(p.get("merchant_location_key", "") or "").strip()
-        loc_keys = [x.get("key", "") for x in locs]
-        loc_labels = [f"{x.get('label', x.get('name', x.get('key', '')))}  —  key: {x.get('key', '')}" for x in locs]
-        loc_index = loc_keys.index(current_key) if current_key in loc_keys else 0
-        loc_sel = st.selectbox(
-            "Inventory Location",
-            loc_labels,
-            index=loc_index,
-            key="loc_key_select",
-            help="This uses the real eBay merchantLocationKey from your connected account, not the display name."
-        )
-        p["merchant_location_key"] = loc_keys[loc_labels.index(loc_sel)]
-        st.caption(f"Using real merchantLocationKey: `{p['merchant_location_key']}`")
+        loc_labels = [x.get("label") or x.get("key") for x in locs]
+        current_key = p.get("merchant_location_key", "")
+        current_idx = 0
+        for i, loc in enumerate(locs):
+            if loc.get("key") == current_key:
+                current_idx = i
+                break
+        loc_sel = st.selectbox("Inventory Location", loc_labels, index=current_idx, key="loc_select")
+        selected_loc = locs[loc_labels.index(loc_sel)]
+        p["merchant_location_key"] = selected_loc.get("key", "")
+        st.caption(f"Using merchantLocationKey: `{p['merchant_location_key']}`")
     else:
-        p["merchant_location_key"] = st.text_input(
-            "Inventory Location Key",
-            value=p.get("merchant_location_key", ""),
-            key="loc_key",
-            help="Click 'Load my eBay policies' first. This must be the exact merchantLocationKey from eBay, not a location name."
-        )
+        st.info("No eBay inventory location was found. The app will create a WAREHOUSE location automatically before upload using the address below.")
+        ca1, ca2, ca3 = st.columns([2, 2, 1])
+        auto_addr = policies.get("identity_address", {}) if isinstance(policies, dict) else {}
+        with ca1:
+            p["location_address_line1"] = st.text_input("Warehouse address", value=p.get("location_address_line1") or auto_addr.get("addressLine1", ""), key="loc_addr1")
+            p["location_city"] = st.text_input("City", value=p.get("location_city") or auto_addr.get("city", ""), key="loc_city")
+        with ca2:
+            p["location_state"] = st.text_input("State", value=p.get("location_state") or auto_addr.get("stateOrProvince", ""), key="loc_state")
+            p["location_postal_code"] = st.text_input("Postal / ZIP", value=p.get("location_postal_code") or auto_addr.get("postalCode", ""), key="loc_postal")
+        with ca3:
+            p["location_country"] = st.text_input("Country", value=p.get("location_country") or auto_addr.get("country", "US"), key="loc_country")
+        p["location_name"] = st.text_input("Location name", value=p.get("location_name", "Main Warehouse"), key="loc_name")
+        p["merchant_location_key"] = "MAINWAREHOUSE"
+        st.caption("eBay will create/use merchantLocationKey `MAINWAREHOUSE`. Keys cannot be renamed after creation.")
 
     p["ebay_html"] = exp.get("description_html", "")
     st.session_state.edit_product = p
@@ -1047,7 +1052,7 @@ def _upload_panel(p: dict, exp: dict):
             with st.expander("Troubleshooting"):
                 st.markdown("""
 - **Policy IDs**: Must be valid policies from your own eBay account, matching the environment (sandbox policies won't work in production and vice versa)
-- **Inventory Location**: Click **Load my eBay policies** and select the real eBay location key from this account
+- **Merchant Location**: Must match a location key set up in eBay Seller Hub → Locations
 - **Token**: If you reconnected eBay recently and still see auth errors, disconnect and reconnect in Settings
 - **Content-Language**: Handled automatically (en-US) — no action needed
                 """)
