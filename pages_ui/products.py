@@ -22,9 +22,16 @@ from ui.ai_rewriter     import rewrite_title, rewrite_description, generate_tags
 from ui.ebay_formatter  import generate_ebay_html, generate_ebay_export
 from ui.ebay_uploader   import upload_to_ebay, get_seller_policies, get_account_info
 from ui.ebay_listings   import fetch_my_listings, fetch_inventory_item
-from core.draft_store   import (
-    save_draft, load_draft, list_drafts, delete_draft, duplicate_draft, get_last_error,
-)
+from core.draft_store   import save_draft, load_draft, list_drafts, delete_draft, duplicate_draft
+
+# get_last_error was added to draft_store.py for the Supabase-fallback banner.
+# Imported defensively so this page never crashes if an older draft_store.py
+# (without this function) is still deployed — it just won't show the banner.
+try:
+    from core.draft_store import get_last_error
+except ImportError:
+    def get_last_error():
+        return None
 
 
 # ─── CSS ──────────────────────────────────────────────────────────────────────
@@ -1058,7 +1065,10 @@ def render_products() -> None:
 
     drafts_count = list_drafts(page=1, page_size=1)["total"]
 
-    store_err = get_last_error()
+    try:
+        store_err = get_last_error()
+    except Exception:
+        store_err = None
     if store_err:
         st.warning(f"⚠️ {store_err}", icon="⚠️")
 
