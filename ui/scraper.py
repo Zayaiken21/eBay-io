@@ -40,6 +40,154 @@ def get_domain(url: str) -> str:
     return urlparse(url).netloc.lower().replace("www.", "")
 
 
+# ── Embedded data-island extraction ────────────────────────────────────────
+# This is the single highest-leverage addition for "heavy JS" sites: most
+# React/Vue/Next.js/Nuxt storefronts still render an initial JSON payload
+# server-side and embed it in a <script> tag, even though the VISIBLE page
+# is built client-side from that data. A plain requests.get() can't run the
+# JS that builds the visible DOM, but it CAN read this embedded JSON
+# directly — often more complete and more reliable than scraping rendered
+# HTML even when rendering does work.
+#
+# This covers a large share of sites that look "JS-only" but actually still
+# ship real product data in the raw response.
+_DATA_ISLAND_PATTERNS = [
+    # Next.js (extremely common: Target, many modern storefronts)
+    (r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', "json"),
+    # Nuxt.js (Vue-based storefronts)
+    (r'window\.__NUXT__\s*=\s*(\{.*?\});?\s*</script>', "js_object"),
+    # Generic Redux/Apollo initial state patterns
+    (r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});?\s*</script>', "js_object"),
+    (r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});?\s*</script>', "js_object"),
+    (r'window\.__APOLLO_STATE__\s*=\s*(\{.*?\});?\s*</script>', "js_object"),
+    # Shopify-native analytics object — present on nearly every Shopify
+    # storefront regardless of theme, contains clean product data.
+    (r'window\.ShopifyAnalytics\.meta\.product\s*=\s*(\{.*?\});', "js_object"),
+    (r'var meta\s*=\s*(\{.*?"product".*?\});', "js_object"),
+    # BigCommerce
+    (r'window\.BCData\s*=\s*(\{.*?\});?\s*</script>', "js_object"),
+]
+
+
+def _extract_data_islands(html: str) -> list:
+    """
+    Returns a list of parsed dicts found in embedded JS data islands.
+    Best-effort: malformed/truncated JSON is silently skipped rather than
+    raising, since these regexes are inherently approximate.
+    """
+    found = []
+    for pattern, _kind in _DATA_ISLAND_PATTERNS:
+        for m in re.finditer(pattern, html, re.DOTALL):
+            raw = m.group(1)
+            parsed = _try_parse_json_loose(raw)
+            if isinstance(parsed, dict):
+                found.append(parsed)
+    return found
+
+
+def _try_parse_json_loose(raw: str):
+    """Attempt strict JSON parse; on failure, trim to the last balanced brace and retry once."""
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    # Trim trailing garbage after the JSON object commonly left by the regex
+    # capturing too much (e.g. a trailing `;</script>` fragment).
+    depth, end = 0, -1
+    for i, ch in enumerate(raw):
+        if ch == "{": depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end > 0:
+        try:
+            return json.loads(raw[:end])
+        except Exception:
+            return None
+    return None
+
+
+def _search_nested(obj, keys: set, max_depth: int = 8) -> dict:
+    """
+    Recursively search a nested dict/list structure for the first dict that
+    contains ANY of the target keys (e.g. {"title","name"} for a product
+    title). Used to pull product fields out of arbitrary Next.js/Nuxt state
+    blobs whose exact shape varies site to site.
+    """
+    found = {}
+
+    def walk(node, depth):
+        if depth > max_depth or (found and len(found) >= len(keys)):
+            return
+        if isinstance(node, dict):
+            for k in keys:
+                if k in node and node[k] and k not in found:
+                    found[k] = node[k]
+            for v in node.values():
+                walk(v, depth + 1)
+        elif isinstance(node, list):
+            for item in node[:30]:  # cap breadth to avoid pathological scans
+                walk(item, depth + 1)
+
+    walk(obj, 0)
+    return found
+
+
+def _fields_from_data_islands(html: str) -> dict:
+    """
+    Pulls title/price/description/images/brand/sku candidates out of any
+    embedded data islands found on the page. Returns whatever it finds —
+    callers treat this as one more source to merge, not an all-or-nothing
+    replacement for HTML-based extraction.
+    """
+    islands = _extract_data_islands(html)
+    if not islands:
+        return {}
+
+    target_keys = {
+        "title", "name", "productTitle",
+        "price", "currentPrice", "salePrice",
+        "description", "body_html", "descriptionHtml",
+        "images", "image", "media",
+        "brand", "vendor", "manufacturer",
+        "sku", "id", "productId",
+    }
+
+    merged = {}
+    for island in islands:
+        result = _search_nested(island, target_keys)
+        for k, v in result.items():
+            merged.setdefault(k, v)
+
+    return merged
+
+
+def _try_shopify_json_endpoint(url: str, session: requests.Session, headers: dict, timeout: int):
+    """
+    Most Shopify stores expose a clean JSON product endpoint at
+    {product-url}.json — this returns fully structured product data
+    (title, full HTML description, all variants/prices, all images) with
+    zero scraping required, completely sidestepping any JS-rendering issue.
+    Only attempted for URLs that look like Shopify product pages
+    (contain /products/); silently returns None if unavailable.
+    """
+    if "/products/" not in url:
+        return None
+    base = url.split("?")[0].rstrip("/")
+    json_url = base + ".json"
+    try:
+        resp = session.get(json_url, headers=headers, timeout=timeout)
+        if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
+            data = resp.json()
+            if isinstance(data, dict) and "product" in data:
+                return data["product"]
+    except Exception:
+        pass
+    return None
+
+
 # ── Bot-wall / CAPTCHA detection ──────────────────────────────────────────
 # Plain HTTP requests can't run JavaScript or pass interactive challenges
 # ("press and hold" buttons, image grids, etc). When a major retailer's
@@ -66,6 +214,34 @@ def _looks_like_bot_wall(html: str, resp_status: int) -> bool:
     is_suspiciously_small = len(html) < 15000
     has_no_product_signals = ("og:title" not in lowered and "application/ld+json" not in lowered)
     return hits >= 1 and (is_suspiciously_small or has_no_product_signals)
+
+
+# ── "JS rendering required" detection ──────────────────────────────────────
+# Distinct from a bot wall: this is a normal 200 response, no CAPTCHA, but
+# the page body is just an empty React/Vue mount point with no real content
+# anywhere — meaning the product data genuinely doesn't exist until client
+# JS runs. Diagnosing this separately from a bot-wall means we can tell the
+# seller the TRUE reason their import returned almost nothing, instead of a
+# generic "low confidence" result that looks like a parsing bug.
+_JS_SHELL_SIGNALS = [
+    '<div id="root"></div>', '<div id="app"></div>', '<div id="__next"></div>',
+    'id="root">​</div>', 'you need to enable javascript to run this app',
+    'noscript', '<div id="react-root"></div>',
+]
+
+
+def _looks_like_js_shell(html: str, has_data_islands: bool) -> bool:
+    if not html or has_data_islands:
+        return False
+    lowered = html.lower()
+    body_match = re.search(r'<body[^>]*>(.*?)</body>', lowered, re.DOTALL)
+    body = body_match.group(1) if body_match else lowered
+    visible_text = re.sub(r'<script.*?</script>', '', body, flags=re.DOTALL)
+    visible_text = re.sub(r'<[^>]+>', '', visible_text).strip()
+    shell_signal_hit = any(sig in lowered for sig in _JS_SHELL_SIGNALS)
+    almost_no_visible_text = len(visible_text) < 200
+    no_structured_data = "application/ld+json" not in lowered and "og:title" not in lowered
+    return (shell_signal_hit or almost_no_visible_text) and no_structured_data
 
 # ── Site-specific selectors ────────────────────────────────────────────────
 SITE_RULES = {
@@ -160,6 +336,76 @@ SITE_RULES = {
         "brand":       [".product-title__brand a"],
         "breadcrumb":  ["[class*='breadcrumb'] a"],
     },
+    "shein": {
+        "title":       ["h1.product-intro__head-name", ".product-intro__head-name"],
+        "price":       [".product-intro__head-mainprice", ".original"],
+        "description": [".product-intro__description", ".product-intro-description"],
+        "features":    [".product-intro__size-radio", ".attr-list li"],
+        "specs_table": [".product-intro__attr li", ".attr-list li"],
+        "images":      [".product-intro__main-img img", ".sw-product-img__main img", ".crop-image-container img"],
+        "brand":       [],
+        "breadcrumb":  [".bread-crumb a"],
+    },
+    "wish": {
+        "title":       ["h1[data-testid='product-name']", "h1.product-name"],
+        "price":       ["[data-testid='primary-price']", ".product-price"],
+        "description": ["[data-testid='product-description']", ".product-description"],
+        "features":    [".product-details li"],
+        "specs_table": [".product-specifications li"],
+        "images":      ["[data-testid='product-image'] img", ".product-image img"],
+        "brand":       [],
+        "breadcrumb":  [".breadcrumb a"],
+    },
+    "newegg": {
+        "title":       ["h1.product-title"],
+        "price":       [".price-current"],
+        "description": [".product-bullets", "#Specs-Block"],
+        "features":    [".product-bullets li"],
+        "specs_table": [".table-horizontal tr", ".spec-table tr"],
+        "images":      [".product-view-img-original", ".thumbnail-list img"],
+        "brand":       [".product-title-brand a"],
+        "breadcrumb":  [".breadcrumb a"],
+    },
+    "costco": {
+        "title":       ["h1.product-h1", "h1[automation-id='productTitle']"],
+        "price":       [".value", "[automation-id='productPriceOutput']"],
+        "description": ["#product-details", ".product-info-description"],
+        "features":    ["#product-details li", ".product-info-description li"],
+        "specs_table": [".product-specifications tr"],
+        "images":      [".product-image-main img", ".thumb-image img"],
+        "brand":       [],
+        "breadcrumb":  [".breadcrumb a"],
+    },
+    "wayfair": {
+        "title":       ["h1[data-enzyme-id='ProductTitle']", "h1.pl-Heading"],
+        "price":       ["[data-enzyme-id='PriceBlock'] span", ".SFPrice"],
+        "description": ["[data-enzyme-id='ProductOverview']", ".ProductDetailOverview"],
+        "features":    ["[data-enzyme-id='ProductOverview'] li"],
+        "specs_table": ["[data-enzyme-id='SpecificationsSection'] tr", ".DimensionsAndSpecifications tr"],
+        "images":      ["[data-enzyme-id='ProductDetailImage'] img", ".ImageComponent img"],
+        "brand":       ["[data-enzyme-id='ProductOverviewBrandName']"],
+        "breadcrumb":  [".Breadcrumbs a"],
+    },
+    "macys": {
+        "title":       ["h1.product-name", "h1[data-auto='product-title']"],
+        "price":       [".price-reg", "[data-auto='product-price']"],
+        "description": [".bullets", "#productDetailsTabs"],
+        "features":    [".bullets li"],
+        "specs_table": ["#productDetailsTabs li"],
+        "images":      [".main-image img", ".thumbnail-image img"],
+        "brand":       [".brand-name a"],
+        "breadcrumb":  [".breadcrumbs a"],
+    },
+    "lowes": {
+        "title":       ["h1[data-selectortype='title']", "h1.title"],
+        "price":       ["[data-testid='mn-pdp-price']", ".main-price"],
+        "description": ["[data-testid='description']", "#descriptionSection"],
+        "features":    ["[data-testid='key-features'] li", ".feature-bullets li"],
+        "specs_table": ["#specsSection tr", ".specs-table tr"],
+        "images":      [".pdp-image img", "[data-testid='product-image'] img"],
+        "brand":       [".brand-image img"],
+        "breadcrumb":  [".breadcrumb a"],
+    },
 }
 
 def _rules_for(domain: str) -> dict:
@@ -224,7 +470,12 @@ def fetch_product_page(url: str, timeout: int = 25, max_retries: int = 4) -> dic
             break
 
         except requests.exceptions.HTTPError as e:
-            code = e.response.status_code if e.response else 0
+            # BUG FIX: requests.Response defines __bool__ as self.ok, which is
+            # False for any 4xx/5xx status. "if e.response else 0" silently
+            # discarded the real status code on every single HTTP error,
+            # always reporting code=0 regardless of the actual response.
+            # Must check "is not None" explicitly, never truthiness.
+            code = e.response.status_code if e.response is not None else 0
             if attempt >= max_retries:
                 msg = {
                     403: "Access denied (403) after multiple attempts. This site actively blocks automated requests — paste the product details manually instead.",
@@ -251,22 +502,96 @@ def fetch_product_page(url: str, timeout: int = 25, max_retries: int = 4) -> dic
     if not BS4:
         return _err("BeautifulSoup not installed. Run: pip install beautifulsoup4 lxml")
 
+    # ── Try the Shopify-native JSON endpoint first ─────────────────────────
+    # If this succeeds, it's the cleanest possible data source — fully
+    # structured, no scraping/parsing guesswork at all. Works regardless of
+    # whether the visible page is JS-rendered, since it's a separate
+    # dedicated data endpoint, not the page itself.
+    shopify_product = _try_shopify_json_endpoint(url, s, hdrs, timeout)
+    if shopify_product:
+        product = _product_from_shopify_json(shopify_product, url, domain)
+        _fill_defaults(product)
+        return {"success": True, "product": product, "note": None, "error": None}
+
     soup = BeautifulSoup(html, "lxml" if _lxml() else "html.parser")
     rules = _rules_for(domain)
-    product = _extract_all(soup, html, url, domain, rules)
+
+    # ── Pull anything available from embedded JS data islands ─────────────
+    # Done BEFORE HTML-based extraction so island data can fill gaps that
+    # selector-based scraping misses on JS-heavy pages.
+    island_fields = _fields_from_data_islands(html)
+
+    product = _extract_all(soup, html, url, domain, rules, island_fields)
     _fill_defaults(product)
 
     note = None
-    if any(s in domain for s in ["aliexpress", "temu", "shein"]) and not product.get("images"):
+    has_islands = bool(island_fields)
+    is_js_shell = _looks_like_js_shell(html, has_islands)
+
+    if is_js_shell and product.get("confidence") == "low":
+        note = (
+            f"{domain} renders its product page almost entirely with JavaScript, and this page had no "
+            f"embedded data we could recover either. A plain page fetch cannot see content that only "
+            f"appears after JavaScript runs — this is a real technical limit, not a parsing bug. "
+            f"Please use Manual Entry to paste in the product details."
+        )
+    elif has_islands and product.get("confidence") in ("medium", "high"):
+        note = f"Recovered product data from {domain}'s embedded page data — results should be solid."
+    elif any(s in domain for s in ["aliexpress", "temu", "shein"]) and not product.get("images"):
         note = f"{domain} is JS-heavy — some images may not load. Add image URLs manually in the editor."
     elif domain not in "".join(SITE_RULES.keys()) and product.get("confidence") == "low":
         note = (f"{domain} isn't a site we have dedicated extraction rules for — we used generic "
-                f"JSON-LD/Open Graph/heuristic parsing. Results may be partial; fill in any gaps manually.")
+                f"JSON-LD/Open Graph/microdata/heuristic parsing. Results may be partial; fill in any gaps manually.")
 
     return {"success": True, "product": product, "note": note, "error": None}
 
 
-def _extract_all(soup, html: str, url: str, domain: str, rules: dict) -> dict:
+def _product_from_shopify_json(sp: dict, url: str, domain: str) -> dict:
+    """Builds our standard product dict directly from Shopify's clean .json endpoint response."""
+    variants = sp.get("variants") or []
+    price = ""
+    if variants:
+        price = _clean_price(str(variants[0].get("price", "")))
+
+    images = []
+    for img in (sp.get("images") or []):
+        src = img.get("src") if isinstance(img, dict) else img
+        if src:
+            images.append(src if str(src).startswith("http") else f"https:{src}")
+
+    options = sp.get("options") or []
+    variant_labels = [o.get("name", "") for o in options if isinstance(o, dict) and o.get("name")]
+
+    specs = {}
+    if sp.get("product_type"):
+        specs["Product Type"] = sp["product_type"]
+    if sp.get("tags"):
+        specs["Tags"] = ", ".join(sp["tags"][:10]) if isinstance(sp["tags"], list) else str(sp["tags"])
+
+    return {
+        "domain": domain, "source_url": url, "status": "draft",
+        "condition": "New", "currency": "USD",
+        "title": _clean_title(sp.get("title", "")),
+        "price": price,
+        "brand": sp.get("vendor", ""),
+        "category": sp.get("product_type", ""),
+        "description": _clean_html(sp.get("body_html", "")),
+        "features": [],
+        "specifications": specs,
+        "images": images[:12],
+        "sku": (variants[0].get("sku", "") if variants else ""),
+        "weight": (f"{variants[0].get('grams', 0)/1000:.2f} kg" if variants and variants[0].get("grams") else ""),
+        "dimensions": "",
+        "variants": variant_labels,
+        "tags": _tags(sp.get("title", ""), [], sp.get("product_type", ""), sp.get("vendor", "")),
+        "confidence": "high",
+    }
+
+
+
+
+def _extract_all(soup, html: str, url: str, domain: str, rules: dict, island_fields: dict = None) -> dict:
+    island_fields = island_fields or {}
     p = {}
     p["domain"]     = domain
     p["source_url"] = url
@@ -274,15 +599,15 @@ def _extract_all(soup, html: str, url: str, domain: str, rules: dict) -> dict:
     p["condition"]  = "New"
     p["currency"]   = "USD"
 
-    p["title"]         = _title(soup, html, rules)
-    p["price"]         = _price(soup, html, rules)
-    p["brand"]         = _brand(soup, html, rules)
+    p["title"]         = _title(soup, html, rules) or _island_str(island_fields, ["title", "name", "productTitle"])
+    p["price"]         = _price(soup, html, rules) or _island_price(island_fields)
+    p["brand"]         = _brand(soup, html, rules) or _island_str(island_fields, ["brand", "vendor", "manufacturer"])
     p["category"]      = _category(soup, html, rules)
-    p["description"]   = _description(soup, html, domain, rules)
+    p["description"]   = _description(soup, html, domain, rules) or _island_str(island_fields, ["description", "body_html", "descriptionHtml"])
     p["features"]      = _features(soup, html, rules)
     p["specifications"]= _specifications(soup, html, domain, rules)
-    p["images"]        = _images(soup, html, url, rules)
-    p["sku"]           = _sku(soup, html)
+    p["images"]        = _images(soup, html, url, rules) or _island_images(island_fields, url)
+    p["sku"]           = _sku(soup, html) or _island_str(island_fields, ["sku", "id", "productId"])
     p["weight"]        = _spec_val(p["specifications"], ["weight","item weight","net weight","shipping weight"])
     p["dimensions"]    = _spec_val(p["specifications"], ["dimensions","size","item dimensions","product dimensions","package dimensions"])
     p["variants"]      = []
@@ -291,12 +616,56 @@ def _extract_all(soup, html: str, url: str, domain: str, rules: dict) -> dict:
     return p
 
 
+def _island_str(fields: dict, keys: list) -> str:
+    for k in keys:
+        v = fields.get(k)
+        if v:
+            if isinstance(v, str):
+                return _clean_html(v) if "<" in v else v.strip()
+            if isinstance(v, (int, float)):
+                return str(v)
+    return ""
+
+
+def _island_price(fields: dict) -> str:
+    for k in ["price", "currentPrice", "salePrice"]:
+        v = fields.get(k)
+        if v is not None:
+            c = _clean_price(str(v))
+            if c:
+                return c
+    return ""
+
+
+def _island_images(fields: dict, base_url: str) -> list:
+    out = []
+    for k in ["images", "image", "media"]:
+        v = fields.get(k)
+        if isinstance(v, list):
+            for item in v:
+                url_val = None
+                if isinstance(item, str):
+                    url_val = item
+                elif isinstance(item, dict):
+                    url_val = item.get("src") or item.get("url") or item.get("originalSrc")
+                if url_val:
+                    out.append(url_val if str(url_val).startswith("http") else urljoin(base_url, str(url_val)))
+        elif isinstance(v, str) and v.startswith("http"):
+            out.append(v)
+    return out[:12]
+
+
 # ── Field extractors ───────────────────────────────────────────────────────
 
 def _title(soup, html, rules):
     # 1. OG
     v = _og(soup, "og:title")
     if v and len(v) > 5: return _clean_title(v)
+    # 1b. Microdata
+    tag = soup.find(attrs={"itemprop": "name"})
+    if tag:
+        t = tag.get("content") or tag.get_text(strip=True)
+        if t and len(t) > 5: return _clean_title(t)
     # 2. Site selectors
     for sel in rules.get("title", []):
         el = soup.select_one(sel)
@@ -379,6 +748,11 @@ def _brand(soup, html, rules):
         if v: return v
     v = _meta_name(soup, "brand")
     if v: return v
+    # Microdata
+    tag = soup.find(attrs={"itemprop": "brand"})
+    if tag:
+        t = tag.get("content") or tag.get_text(strip=True)
+        if t: return t
     # JSON-LD
     raw = _jld(html, "brand")
     if raw:
@@ -411,6 +785,12 @@ def _description(soup, html, domain, rules):
     # 1. JSON-LD
     v = _jld(html, "description")
     if v and len(str(v)) > 60: return _clean_html(str(v))
+    # 1b. Microdata (schema.org itemprop) — common on sites that don't use
+    # JSON-LD but still mark up Product schema directly in HTML attributes.
+    tag = soup.find(attrs={"itemprop": "description"})
+    if tag:
+        t = tag.get("content") or tag.get_text(separator="\n", strip=True)
+        if t and len(t) > 60: return t
     # 2. Site-specific selectors
     for sel in rules.get("description", []):
         el = soup.select_one(sel)
