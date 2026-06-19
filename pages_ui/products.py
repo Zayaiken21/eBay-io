@@ -653,9 +653,9 @@ def _open_editor(draft_id: str):
         st.session_state.upload_result = None
         st.session_state.prod_tab      = "editor"
 
-def _open_editor_from_ebay(sku: str):
+def _open_editor_from_ebay(sku: str, listing_id: str = ""):
     """Pull a LIVE eBay listing into the editor (creates a local draft mirror)."""
-    result = fetch_inventory_item(sku)
+    result = fetch_inventory_item(sku, listing_id)
     if not result["success"]:
         st.error(f"Could not load listing: {result['error']}")
         return
@@ -1224,8 +1224,8 @@ def _tab_store():
             if item.get("listing_url"):
                 st.markdown(f"[🔗 View on eBay]({item['listing_url']})")
         with c3:
-            if st.button("✏️ Edit", key=f"store_edit_{item['sku']}", use_container_width=True):
-                _open_editor_from_ebay(item["sku"])
+            if st.button("✏️ Edit", key=f"store_edit_{item.get('listing_id') or item.get('sku')}", use_container_width=True):
+                _open_editor_from_ebay(item.get("sku", ""), item.get("listing_id", ""))
                 st.rerun()
         with c4:
             confirm_key = f"confirm_del_{listing_id}"

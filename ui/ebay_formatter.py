@@ -56,7 +56,7 @@ def generate_ebay_html(product: dict) -> str:
     thumbs_html = ""
     if len(images) > 1:
         thumbs_html = "<div class='eb-thumbs'>" + "".join(
-            f"<img src='{img}' class='eb-thumb' onclick='showMain(this.src)' />"
+            f"<img src='{img}' class='eb-thumb' />"
             for img in images[:8]
         ) + "</div>"
 
@@ -70,8 +70,6 @@ def generate_ebay_html(product: dict) -> str:
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{
@@ -283,11 +281,6 @@ def generate_ebay_html(product: dict) -> str:
   <p style="margin-top:6px; opacity:0.85;">✅ Secure checkout &nbsp;|&nbsp; 🚚 Fast dispatch &nbsp;|&nbsp; 💬 Friendly support</p>
 </div>
 
-<script>
-function showMain(src) {{
-  document.getElementById('mainImg').src = src;
-}}
-</script>
 </body>
 </html>"""
     return html

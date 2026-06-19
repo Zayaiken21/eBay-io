@@ -216,56 +216,82 @@ def _fetch_published_inventory_offers(api_base: str, token: str, marketplace: st
     }
 
 
-def fetch_inventory_item(sku: str) -> dict:
+def fetch_inventory_item(sku: str, listing_id: str = "") -> dict:
+    """
+    Load a live listing into the editor.
+    Inventory API is used for safe SKUs. Trading API GetItem is used for older
+    live listings whose SKU is blank/unsafe for Inventory API.
+    """
     sku = str(sku or "").strip()
-    if not sku or len(sku) > 50 or re.fullmatch(r"[A-Za-z0-9]+", sku) is None:
-        return {"success": False, "product": None, "error": "This listing has no Inventory-API-safe SKU. Open it on eBay directly or create a new cleaned listing."}
-
+    listing_id = str(listing_id or "").strip()
     owner = _owner_name()
     try:
         access_token, account = get_valid_ebay_access_token(owner)
     except RuntimeError as e:
         return {"success": False, "product": None, "error": str(e)}
 
-    env, api_base, _ = _resolve_env(account)
+    env, api_base, trading_url = _resolve_env(account)
     marketplace = account.get("marketplace_id", "EBAY_US")
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
-        "Accept-Language": "en-US",
-        "X-EBAY-C-MARKETPLACE-ID": marketplace,
-    }
 
+    if sku and len(sku) <= 50 and re.fullmatch(r"[A-Za-z0-9]+", sku) is not None:
+        headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json", "Accept-Language": "en-US", "X-EBAY-C-MARKETPLACE-ID": marketplace}
+        try:
+            resp = requests.get(f"{api_base}/sell/inventory/v1/inventory_item/{sku}", headers=headers, timeout=30)
+        except Exception as e:
+            return {"success": False, "product": None, "error": f"Could not reach eBay: {e}"}
+        if resp.status_code < 400:
+            data = resp.json(); product = data.get("product", {}) or {}; aspects = product.get("aspects", {}) or {}
+            specifications = {k: (v[0] if isinstance(v, list) and v else v) for k, v in aspects.items()}
+            return {"success": True, "product": {"title": product.get("title", ""), "description": product.get("description", ""), "images": product.get("imageUrls", []), "brand": product.get("brand", ""), "sku": sku, "condition": data.get("condition", "NEW").replace("_", " ").title(), "specifications": specifications, "quantity": data.get("availability", {}).get("shipToLocationAvailability", {}).get("quantity", 1), "status": "live", "_from_ebay_sku": sku, "ebay_listing_id": listing_id}, "error": None}
+        if not listing_id:
+            return {"success": False, "product": None, "error": _safe_resp(resp)}
+
+    if not listing_id:
+        return {"success": False, "product": None, "error": "This live listing has no Inventory-safe SKU and no eBay ItemID was available for Trading API fallback."}
+    return _fetch_trading_item(trading_url, access_token, listing_id, env)
+
+
+def _fetch_trading_item(trading_url: str, token: str, listing_id: str, env: str) -> dict:
+    headers = {"X-EBAY-API-CALL-NAME": "GetItem", "X-EBAY-API-SITEID": "0", "X-EBAY-API-COMPATIBILITY-LEVEL": "1193", "X-EBAY-API-IAF-TOKEN": token, "Content-Type": "text/xml"}
+    body = f"""<?xml version="1.0" encoding="utf-8"?>
+<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials/>
+  <ItemID>{listing_id}</ItemID>
+  <DetailLevel>ReturnAll</DetailLevel>
+  <IncludeItemSpecifics>true</IncludeItemSpecifics>
+  <ErrorLanguage>en_US</ErrorLanguage>
+  <WarningLevel>High</WarningLevel>
+</GetItemRequest>"""
     try:
-        resp = requests.get(f"{api_base}/sell/inventory/v1/inventory_item/{sku}", headers=headers, timeout=30)
+        resp = requests.post(trading_url, headers=headers, data=body.encode("utf-8"), timeout=45)
     except Exception as e:
-        return {"success": False, "product": None, "error": f"Could not reach eBay: {e}"}
-
+        return {"success": False, "product": None, "error": f"Could not reach eBay Trading API: {e}"}
     if resp.status_code >= 400:
-        return {"success": False, "product": None, "error": _safe_resp(resp)}
-
-    data = resp.json()
-    product = data.get("product", {}) or {}
-    aspects = product.get("aspects", {}) or {}
-    specifications = {k: (v[0] if isinstance(v, list) and v else v) for k, v in aspects.items()}
-
-    return {
-        "success": True,
-        "product": {
-            "title": product.get("title", ""),
-            "description": product.get("description", ""),
-            "images": product.get("imageUrls", []),
-            "brand": product.get("brand", ""),
-            "sku": sku,
-            "condition": data.get("condition", "NEW").replace("_", " ").title(),
-            "specifications": specifications,
-            "quantity": data.get("availability", {}).get("shipToLocationAvailability", {}).get("quantity", 1),
-            "status": "live",
-            "_from_ebay_sku": sku,
-        },
-        "error": None,
-    }
-
+        return {"success": False, "product": None, "error": resp.text[:500]}
+    try:
+        root = ET.fromstring(resp.text)
+    except Exception as e:
+        return {"success": False, "product": None, "error": f"Could not parse eBay GetItem response: {e}"}
+    ns = {"e": "urn:ebay:apis:eBLBaseComponents"}; ack = _txt(root.find("e:Ack", ns)).lower()
+    if ack == "failure":
+        msgs = []
+        for err in root.findall(".//e:Errors", ns):
+            code = _txt(err.find("e:ErrorCode", ns)); msg = _txt(err.find("e:LongMessage", ns)) or _txt(err.find("e:ShortMessage", ns))
+            if msg: msgs.append(f"{code}: {msg}" if code else msg)
+        return {"success": False, "product": None, "error": "; ".join(msgs) or "GetItem failed"}
+    item = root.find("e:Item", ns)
+    if item is None:
+        return {"success": False, "product": None, "error": "eBay GetItem returned no item."}
+    title = _txt(item.find("e:Title", ns)); desc = _txt(item.find("e:Description", ns)); old_sku = _txt(item.find("e:SKU", ns))
+    price_node = item.find("e:StartPrice", ns) or item.find("e:SellingStatus/e:CurrentPrice", ns)
+    price = price_node.text if price_node is not None and price_node.text else ""; qty = _txt(item.find("e:Quantity", ns)) or "1"
+    images = [_txt(x) for x in item.findall("e:PictureDetails/e:PictureURL", ns) if _txt(x)]
+    category_id = _txt(item.find("e:PrimaryCategory/e:CategoryID", ns)); category_name = _txt(item.find("e:PrimaryCategory/e:CategoryName", ns))
+    specifics = {}
+    for nv in item.findall(".//e:ItemSpecifics/e:NameValueList", ns):
+        name = _txt(nv.find("e:Name", ns)); value = _txt(nv.find("e:Value", ns))
+        if name and value: specifics[name] = value
+    return {"success": True, "product": {"title": title, "description": desc, "images": images, "brand": specifics.get("Brand", ""), "sku": old_sku, "condition": "New", "specifications": specifics, "quantity": int(qty) if str(qty).isdigit() else 1, "price": price, "category": category_name, "category_id_override": category_id, "category_id_override_name": category_name, "status": "live", "_from_ebay_sku": old_sku, "_edit_via_trading": True, "ebay_listing_id": listing_id, "ebay_listing_url": f"https://www.ebay.com/itm/{listing_id}" if env == "production" else f"https://sandbox.ebay.com/itm/{listing_id}"}, "error": None}
 
 def delete_ebay_listing(listing_id: str) -> dict:
     """
