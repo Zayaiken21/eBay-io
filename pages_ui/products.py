@@ -700,6 +700,12 @@ def _tab_editor():
     p   = st.session_state.edit_product
     did = st.session_state.editing_id
 
+    if p.get("_from_ebay_sku") or p.get("ebay_listing_id"):
+        st.info(
+            f"🔗 Editing a **live eBay listing** (SKU `{p.get('_from_ebay_sku') or p.get('sku','')}`). "
+            "Publishing from here will update this exact listing on eBay — it will not create a duplicate."
+        )
+
     cb, cm, cseo, csave = st.columns([1, 4, 2, 1])
     with cb:
         if st.button("← Drafts"):
@@ -745,7 +751,8 @@ def _tab_editor():
         with ctb:
             if st.button("✨", use_container_width=True, help="Clean & optimize title"):
                 r = rewrite_title(p.get("title",""), brand=p.get("brand",""),
-                                   category=p.get("category",""), features=p.get("features",[]))
+                                   category=p.get("category",""), features=p.get("features",[]),
+                                   condition=p.get("condition",""))
                 if r["success"]: p["title"] = r["title"]; st.rerun()
 
         tl = len(p.get("title",""))
@@ -952,42 +959,7 @@ def _tab_publish():
     st.markdown(f"<div style='font-size:16px;font-weight:800;margin-bottom:16px;'>"
                 f"🛒 {p.get('title','')[:60]}</div>", unsafe_allow_html=True)
 
-    t_copy, t_html, t_preview, t_upload = st.tabs(
-        ["📋 Copy Fields", "📄 HTML Code", "👁️ Live Preview", "🚀 Upload to eBay"]
-    )
-
-    with t_copy:
-        st.markdown('<div class="ef-card"><div class="ef-lbl">eBay Title</div>'
-                    f'<div class="ef-val">{exp.get("title","")}</div></div>', unsafe_allow_html=True)
-        st.code(exp.get("title",""), language=None)
-
-        c1, c2 = st.columns(2)
-        with c1:
-            for lbl, key in [("Category","category"),("Condition","condition"),
-                              ("Price","price"),("SKU","sku"),("Quantity","quantity")]:
-                val = exp.get(key,"")
-                if key == "price" and val: val = f"${val}"
-                st.markdown(f'<div class="ef-card"><div class="ef-lbl">{lbl}</div>'
-                            f'<div class="ef-val">{val or "—"}</div></div>', unsafe_allow_html=True)
-        with c2:
-            st.markdown(f'<div class="ef-card"><div class="ef-lbl">Search Tags</div>'
-                        f'<div class="ef-val">{", ".join(exp.get("tags",[]))}</div></div>',
-                        unsafe_allow_html=True)
-            st.markdown('<div class="ef-card"><div class="ef-lbl">Item Specifics</div>'
-                        '<div class="ef-val">' +
-                        "".join(f"<div>· <b>{k}</b>: {v}</div>"
-                                for k,v in list(exp.get("item_specifics",{}).items())[:8]) +
-                        "</div></div>", unsafe_allow_html=True)
-
-        if exp.get("images"):
-            st.markdown("**Image URLs** — upload to eBay image manager:")
-            for i, url in enumerate(exp["images"], 1):
-                st.code(url, language=None)
-
-    with t_html:
-        st.info("Copy → eBay Create Listing → Description → click **HTML** button → paste.")
-        st.text_area("HTML", value=exp.get("description_html",""),
-                      height=400, label_visibility="collapsed", key="pub_html_out")
+    t_preview, t_upload = st.tabs(["👁️ Live Preview", "🚀 Upload to eBay"])
 
     with t_preview:
         st.markdown("**Live Preview:**")
@@ -1013,16 +985,19 @@ def _upload_panel(p: dict, exp: dict):
         <div class="no-connect-panel">
           <h4>⚠️ No eBay Account Connected</h4>
           <p>Go to <strong>Settings → eBay</strong> to connect your store via OAuth,
-          then return here to publish.</p>
+          then return here to publish directly with one click.</p>
         </div>""", unsafe_allow_html=True)
         st.caption(f"Resolved owner_name: `{owner}` · Make sure the eBay account was connected under this name.")
-        with st.expander("📋 Publish manually instead"):
-            st.markdown("""
-1. Go to the **HTML Code** tab above and copy the HTML
-2. On eBay → Create Listing → Description → click **HTML** → paste
-3. Fill in Title, Price, Category from **Copy Fields**
-4. Upload images from the image URL list
-            """)
+        with st.expander("📋 Publish manually instead (no eBay connection yet)"):
+            st.markdown("Copy the HTML below, then on eBay: Create Listing → Description → click **HTML** → paste.")
+            st.text_area("eBay-ready HTML", value=exp.get("description_html",""),
+                          height=300, label_visibility="collapsed", key="fallback_html_out")
+            st.markdown(f"**Title:** {exp.get('title','')}")
+            st.markdown(f"**Price:** ${exp.get('price','')}" if exp.get('price') else "**Price:** (not set)")
+            if exp.get("images"):
+                st.markdown("**Image URLs:**")
+                for url in exp["images"]:
+                    st.code(url, language=None)
         return
 
     acct_label     = (info.get("store_name") or info.get("ebay_username")
@@ -1132,9 +1107,12 @@ def _upload_panel(p: dict, exp: dict):
     if missing_policies:
         st.warning("⚠️ Load your eBay policies above and select fulfillment, payment, and return policies before publishing.")
 
-    if st.button("🚀 Publish to eBay", type="primary",
+    is_live_edit = bool(p.get("_from_ebay_sku") or p.get("ebay_listing_id"))
+    publish_label = "🔄 Update Live Listing on eBay" if is_live_edit else "🚀 Publish to eBay"
+
+    if st.button(publish_label, type="primary",
                  use_container_width=True, disabled=missing_policies):
-        with st.spinner("Publishing to eBay…"):
+        with st.spinner("Updating eBay…" if is_live_edit else "Publishing to eBay…"):
             result = upload_to_ebay(p)
         st.session_state.upload_result = result
         if result["success"]:

@@ -15,6 +15,12 @@ from core.token_store import (
     cancel_token,
     cancel_all_tokens,
 )
+try:
+    from core.token_store import get_last_error as get_token_store_error
+except Exception:
+    def get_token_store_error():
+        return None
+
 
 
 def _current_owner_name() -> str:
@@ -80,7 +86,7 @@ def render_settings() -> None:
     if oauth_error:
         st.error(f"eBay OAuth callback error: {oauth_error}")
 
-    if st.session_state.role == "CEO":
+    if str(st.session_state.get("role") or "").lower() == "ceo":
         render_ceo_settings()
     else:
         render_client_settings()
@@ -152,13 +158,29 @@ def render_ceo_settings() -> None:
             if not client_name.strip():
                 st.error("Enter a client name first.")
             else:
-                token_data = create_token(client_name)
-                st.success("Client token created.")
-                st.code(token_data["token"])
+                try:
+                    token_data = create_token(client_name)
+                    st.success("Client token created.")
+                    st.code(token_data["token"])
+                except Exception as exc:
+                    st.error(f"Token create failed: {exc}")
 
     st.divider()
 
-    tokens = load_tokens()
+    token_store_error = get_token_store_error()
+    if token_store_error:
+        st.warning(token_store_error)
+
+    try:
+        tokens = load_tokens()
+    except Exception as exc:
+        st.error(f"Could not load client tokens: {exc}")
+        tokens = []
+
+    token_store_error = get_token_store_error()
+    if token_store_error:
+        st.warning(token_store_error)
+
     active_tokens = [token for token in tokens if token.get("active") is True]
 
     st.subheader("Active Client Tokens")
@@ -188,8 +210,11 @@ def render_ceo_settings() -> None:
 
         with col3:
             if st.button("X", key=f"cancel_{item['token']}"):
-                cancel_token(item["token"])
-                st.rerun()
+                try:
+                    cancel_token(item["token"])
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Token delete failed: {exc}")
 
     left, middle, right = st.columns([1, 2, 1])
 
@@ -209,9 +234,12 @@ def render_ceo_settings() -> None:
     st.divider()
 
     if st.button("Cancel All Tokens", use_container_width=True):
-        cancel_all_tokens()
-        st.warning("All client tokens have been cancelled.")
-        st.rerun()
+        try:
+            cancel_all_tokens()
+            st.warning("All client tokens have been cancelled.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Cancel all failed: {exc}")
 
 
 def render_client_settings() -> None:

@@ -203,20 +203,51 @@ def _strip_html(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _nz(value, fallback: str = "") -> str:
+    """
+    'Not falsy' string getter. Fixes the exact bug behind eBay error 25718:
+    dict.get(key, default) only uses `default` when the KEY IS MISSING — if
+    the key exists with value None or "", get() returns that None/"" as-is.
+    Every prior version of this file relied on .get(key, "fallback") and
+    silently produced empty or "None"-containing strings whenever a field
+    existed but was None (e.g. a manually-entered or eBay-pulled product
+    with title=None). This helper guarantees a real, non-empty string.
+    """
+    if value is None:
+        return fallback
+    s = str(value).strip()
+    return s if s else fallback
+
+
 def _safe_inventory_description(product: dict) -> str:
     """
-    eBay Inventory API product.description must be text-like and <= 4000 chars.
-    Do NOT send the full listing HTML here.
+    eBay Inventory API product.description MUST be between 1 and 4000
+    characters (error 25718 if violated in either direction). This function
+    is written to make a zero-length result structurally impossible:
+    every fallback level uses _nz() instead of dict.get(key, default), and
+    the final line guarantees a minimum-length string no matter what.
     """
-    parts = [
-        product.get("description", ""),
-        "\n".join(product.get("features") or []),
-        product.get("title", ""),
-    ]
-    text = _strip_html("\n".join(str(x) for x in parts if x))
+    title       = _nz(product.get("title"), "Item")
+    description = _nz(product.get("description"))
+    features    = [f for f in (product.get("features") or []) if _nz(f)]
+
+    parts = [p for p in [description, "\n".join(features)] if p]
+    text = _strip_html("\n".join(parts))
+
     if not text:
-        text = f"Quality item: {product.get('title', 'Item')}"
-    return text[:3990] or "Quality item."
+        text = f"{title} — quality item, carefully inspected before shipping."
+
+    text = text.strip()
+    if not text:
+        # Should be structurally unreachable given the line above, but a
+        # hard floor costs nothing and guarantees we are never under eBay's
+        # 1-character minimum.
+        text = "Quality item, carefully inspected before shipping."
+
+    # eBay's max is 4000; trim with margin and never let truncation produce
+    # an empty result (impossible here since text is already non-empty,
+    # but slicing is bounded explicitly for clarity).
+    return text[:3990]
 
 
 def _safe_listing_description(product: dict) -> str:
@@ -224,7 +255,7 @@ def _safe_listing_description(product: dict) -> str:
     eBay listingDescription can use HTML, but eBay forbids JavaScript, iframe,
     meta/base tags, cookies, replace(), includes(), and inline event handlers.
     """
-    html = str(product.get("ebay_html") or product.get("description") or product.get("title") or "Quality item.")
+    html = _nz(product.get("ebay_html")) or _nz(product.get("description")) or _nz(product.get("title")) or "Quality item."
     html = re.sub(r"(?is)<script\b[^>]*>.*?</script>", "", html)
     html = re.sub(r"(?is)<style\b[^>]*>.*?</style>", "", html)
     html = re.sub(r"(?is)<(iframe|meta|base|object|embed|form|input|button|link)\b[^>]*>.*?</\1>", "", html)
