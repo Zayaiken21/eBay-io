@@ -22,7 +22,9 @@ from ui.ai_rewriter     import rewrite_title, rewrite_description, generate_tags
 from ui.ebay_formatter  import generate_ebay_html, generate_ebay_export
 from ui.ebay_uploader   import upload_to_ebay, get_seller_policies, get_account_info
 from ui.ebay_listings   import fetch_my_listings, fetch_inventory_item
-from core.draft_store   import save_draft, load_draft, list_drafts, delete_draft, duplicate_draft
+from core.draft_store   import (
+    save_draft, load_draft, list_drafts, delete_draft, duplicate_draft, get_last_error,
+)
 
 
 # ─── CSS ──────────────────────────────────────────────────────────────────────
@@ -294,7 +296,8 @@ def _tab_import():
     st.markdown("""
     <div class="import-box">
       <h3>🔗 Import Product from Any Store</h3>
-      <p>Paste any product URL — automatically extracts title, images, price, description, features, and specs.</p>
+      <p>Paste any product URL — automatically extracts title, images, price, description, features, and specs,
+         then automatically applies SEO optimization. No extra steps needed.</p>
       <div class="site-pills">
         <span class="site-pill">🛒 Amazon</span><span class="site-pill">🏪 eBay</span>
         <span class="site-pill">🔵 Walmart</span><span class="site-pill">🟠 AliExpress</span>
@@ -307,27 +310,26 @@ def _tab_import():
     url = st.text_input("URL", placeholder="https://www.amazon.com/dp/... or any product page URL",
                         label_visibility="collapsed", key="import_url_field")
 
-    c1, c2 = st.columns([2, 5])
-    with c1:
-        go = st.button("⬇️ Import Product", type="primary", use_container_width=True)
-    with c2:
-        fast = st.button("🚀 Import + Auto SEO", use_container_width=True,
-                         help="Import then immediately apply SEO optimization")
+    go = st.button("⬇️ Import & Auto-Optimize", type="primary", use_container_width=False)
 
-    if (go or fast) and url.strip():
-        _run_import(url.strip(), auto_seo=fast)
-    elif go or fast:
+    if go and url.strip():
+        _run_import(url.strip())
+    elif go:
         st.warning("Paste a product URL above first.")
 
     if st.session_state.import_result:
         _show_import_result(st.session_state.import_result)
 
 
-def _run_import(url: str, auto_seo: bool = False):
+def _run_import(url: str):
+    """
+    Imports a product AND automatically applies SEO optimization —
+    no button click required. This always runs; there is no manual-only path.
+    """
     bar = st.progress(0, text="Starting...")
     bar.progress(15, "📡 Connecting to store...")
     result = fetch_product_page(url)
-    bar.progress(75, "🔍 Parsing product data...")
+    bar.progress(70, "🔍 Parsing product data...")
 
     if not result["success"]:
         bar.empty()
@@ -339,9 +341,9 @@ def _run_import(url: str, auto_seo: bool = False):
 
     product = result["product"]
 
-    if auto_seo:
-        bar.progress(90, "✨ Applying SEO optimization...")
-        product = auto_seo_optimize(product)
+    bar.progress(90, "✨ Auto-optimizing title, description & tags...")
+    product = auto_seo_optimize(product)
+    product["seo_auto_applied"] = True
 
     bar.progress(100, "✅ Done!")
     bar.empty()
@@ -391,8 +393,11 @@ def _show_import_result(p: dict):
     with st.expander("📋 All extracted data", expanded=False):
         st.json({k: v for k, v in p.items() if k not in ("description", "ebay_html")})
 
+    if p.get("seo_auto_applied"):
+        st.success("✨ SEO auto-optimization already applied to this import.")
+
     st.markdown("---")
-    ca, cb, cc, cd = st.columns(4)
+    ca, cb, cc = st.columns(3)
     with ca:
         if st.button("💾 Save Draft", type="primary", use_container_width=True):
             did = save_draft(p)
@@ -403,12 +408,6 @@ def _show_import_result(p: dict):
         if st.button("✏️ Edit Now", use_container_width=True):
             did = save_draft(p); _open_editor(did); st.rerun()
     with cc:
-        if st.button("✨ SEO + Save", use_container_width=True):
-            did = save_draft(auto_seo_optimize(p))
-            st.success(f"SEO optimized — ID `{did}`")
-            st.session_state.import_result = None
-            _set_tab("drafts"); st.rerun()
-    with cd:
         if st.button("🗑️ Discard", use_container_width=True):
             st.session_state.import_result = None; st.rerun()
 
@@ -513,8 +512,19 @@ def _tab_drafts():
 # ─── EDITOR TAB ───────────────────────────────────────────────────────────────
 
 def _open_editor(draft_id: str):
+    """
+    Opens a draft in the editor. If SEO has never been auto-applied to this
+    draft, it's applied automatically right now — no button click required.
+    Subsequent manual edits are preserved; SEO only auto-runs once per draft
+    unless the seller explicitly clicks ✨ Auto SEO again.
+    """
     p = load_draft(draft_id)
     if p:
+        if not p.get("seo_auto_applied"):
+            p = auto_seo_optimize(p)
+            p["seo_auto_applied"] = True
+            save_draft(p, draft_id)
+
         st.session_state.editing_id    = draft_id
         st.session_state.edit_product  = dict(p)
         st.session_state.export_data   = None
@@ -577,12 +587,14 @@ def _tab_editor():
         st.markdown(f"<div style='font-size:14px;font-weight:700;padding-top:7px;color:#1a202c;'>"
                     f"✏️ {p.get('title','Untitled')[:55]}</div>", unsafe_allow_html=True)
     with cseo:
-        if st.button("✨ Auto SEO", type="primary", use_container_width=True):
+        if st.button("🔄 Re-optimize", type="secondary", use_container_width=True,
+                     help="SEO was already auto-applied when this draft was created. Click to re-run it against your current edits."):
             with st.spinner("Optimizing…"):
                 p = auto_seo_optimize(p)
+                p["seo_auto_applied"] = True
                 st.session_state.edit_product = p
             save_draft(p, did)
-            st.success("SEO applied & saved!")
+            st.success("SEO re-applied & saved!")
             st.rerun()
     with csave:
         if st.button("💾", use_container_width=True, help="Save draft"):
@@ -1045,6 +1057,11 @@ def render_products() -> None:
     st.markdown(CSS, unsafe_allow_html=True)
 
     drafts_count = list_drafts(page=1, page_size=1)["total"]
+
+    store_err = get_last_error()
+    if store_err:
+        st.warning(f"⚠️ {store_err}", icon="⚠️")
+
     _hero(drafts_count)
     _account_banner()
     _tabs(drafts_count)

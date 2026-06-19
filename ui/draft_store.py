@@ -1,29 +1,30 @@
 """
 draft_store.py — Per-user draft storage backed by Supabase.
 
-Why Supabase instead of a local JSON file:
-  - Streamlit Cloud's filesystem is ephemeral and NOT shared across replicas.
-    A local drafts.json means every user (and every container restart) sees
-    different/empty data, and everyone who DOES share a replica sees each
-    other's drafts. Supabase fixes both problems at once.
-  - Drafts are scoped by owner_name, exactly like ebay_accounts, so each
-    logged-in user (client_name from session.py, or "ceo") only ever sees
-    their own drafts.
+Hardened against:
+  - Missing/misconfigured Supabase credentials
+  - Table not yet created
+  - PostgREST returning an error dict instead of a list
+  - Missing or malformed Content-Range headers
+  - Any other unexpected response shape
+
+On ANY Supabase failure, this module degrades to the local-file fallback
+instead of crashing the page with an unhandled TypeError. A warning is
+shown via _last_error so the UI can surface "drafts are running in local
+mode" instead of a blank crash screen.
 
 Table expected in Supabase — `product_drafts`:
     id              bigint, primary key, identity
     draft_id        text, unique
     owner_name      text
-    data            jsonb        -- the full product dict
+    data            jsonb
     status          text
     created_at      timestamptz
     updated_at      timestamptz
-
-No row-count cap is enforced anywhere in this module — Postgres/Supabase
-has no practical limit on the number of rows per owner.
 """
 
 import json
+import os
 import uuid
 import requests
 import streamlit as st
@@ -35,14 +36,20 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 def _supabase_url() -> str:
-    return str(st.secrets.get("SUPABASE_URL", "")).rstrip("/")
+    try:
+        return str(st.secrets.get("SUPABASE_URL", "")).rstrip("/")
+    except Exception:
+        return ""
 
 def _supabase_key() -> str:
-    return str(
-        st.secrets.get("SUPABASE_SERVICE_ROLE_KEY")
-        or st.secrets.get("SUPABASE_SECRET_KEY")
-        or ""
-    )
+    try:
+        return str(
+            st.secrets.get("SUPABASE_SERVICE_ROLE_KEY")
+            or st.secrets.get("SUPABASE_SECRET_KEY")
+            or ""
+        )
+    except Exception:
+        return ""
 
 def _using_supabase() -> bool:
     return bool(_supabase_url() and _supabase_key())
@@ -57,12 +64,7 @@ def _headers(prefer: Optional[str] = None) -> dict:
 def _table_url() -> str:
     return f"{_supabase_url()}/rest/v1/product_drafts"
 
-
 def _owner_name() -> str:
-    """
-    Resolve the current logged-in user — matches session.py exactly.
-    session.py sets client_name (client login) or role (ceo login).
-    """
     client_name = st.session_state.get("client_name") or ""
     role        = st.session_state.get("role") or ""
     if client_name:
@@ -71,11 +73,28 @@ def _owner_name() -> str:
         return "ceo"
     return "default"
 
+def _is_list_response(payload) -> bool:
+    return isinstance(payload, list)
 
-# ── Local-file fallback (only used if Supabase isn't configured) ─────────
-# Kept ONLY for local dev convenience when secrets.toml has no Supabase
-# credentials yet. Per-user isolation is NOT guaranteed in this mode.
-import os
+def _safe_json(resp):
+    """Never throws — returns None on any parse failure."""
+    try:
+        return resp.json()
+    except Exception:
+        return None
+
+def _set_last_error(msg: Optional[str]):
+    st.session_state["_draft_store_error"] = msg
+
+def get_last_error() -> Optional[str]:
+    """UI can call this to show a banner like 'Drafts running in local-only mode'."""
+    return st.session_state.get("_draft_store_error")
+
+
+# ── Local-file fallback ───────────────────────────────────────────────────
+# Used automatically whenever Supabase is unreachable or misconfigured.
+# NOTE: in this mode, drafts are NOT guaranteed isolated across Streamlit
+# Cloud replicas — it exists purely so the app never hard-crashes.
 _LOCAL_FILE = "drafts_local_fallback.json"
 
 def _local_load_all() -> dict:
@@ -88,16 +107,25 @@ def _local_load_all() -> dict:
         return {}
 
 def _local_save_all(data: dict) -> None:
-    with open(_LOCAL_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    try:
+        with open(_LOCAL_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+def _local_list(owner: str, page: int, page_size: int) -> dict:
+    all_for_owner = list(_local_load_all().get(owner, {}).values())
+    all_for_owner.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
+    total  = len(all_for_owner)
+    offset = (page - 1) * page_size
+    items  = all_for_owner[offset: offset + page_size]
+    return _paged(items, total, page, page_size)
 
 
 # ── Public API ─────────────────────────────────────────────────────────
 
 def save_draft(product: dict, draft_id: Optional[str] = None) -> str:
-    """Create or update a draft, scoped to the current logged-in owner."""
     owner = _owner_name()
-
     if draft_id is None:
         draft_id = str(uuid.uuid4())[:8]
 
@@ -109,6 +137,7 @@ def save_draft(product: dict, draft_id: Optional[str] = None) -> str:
     product.setdefault("created_at", now)
 
     if not _using_supabase():
+        _set_last_error("Supabase not configured — drafts saved locally only (not shared across deployments).")
         all_drafts = _local_load_all()
         all_drafts.setdefault(owner, {})
         product["created_at"] = all_drafts[owner].get(draft_id, {}).get("created_at", now)
@@ -116,123 +145,146 @@ def save_draft(product: dict, draft_id: Optional[str] = None) -> str:
         _local_save_all(all_drafts)
         return draft_id
 
-    # Check if a row already exists for this draft_id + owner
-    existing = _get_row(draft_id, owner)
-    row = {
-        "draft_id":   draft_id,
-        "owner_name": owner,
-        "data":       product,
-        "status":     product.get("status", "draft"),
-        "updated_at": now,
-    }
+    try:
+        existing = _get_row(draft_id, owner)
+        row = {
+            "draft_id":   draft_id,
+            "owner_name": owner,
+            "data":       product,
+            "status":     product.get("status", "draft"),
+            "updated_at": now,
+        }
 
-    if existing:
-        resp = requests.patch(
-            _table_url(),
-            headers=_headers(),
-            params={"draft_id": f"eq.{draft_id}", "owner_name": f"eq.{owner}"},
-            data=json.dumps(row),
-            timeout=30,
-        )
-    else:
-        row["created_at"] = now
-        resp = requests.post(
-            _table_url(),
-            headers=_headers("return=representation"),
-            data=json.dumps(row),
-            timeout=30,
-        )
+        if existing:
+            resp = requests.patch(
+                _table_url(), headers=_headers(),
+                params={"draft_id": f"eq.{draft_id}", "owner_name": f"eq.{owner}"},
+                data=json.dumps(row), timeout=30,
+            )
+        else:
+            row["created_at"] = now
+            resp = requests.post(
+                _table_url(), headers=_headers("return=representation"),
+                data=json.dumps(row), timeout=30,
+            )
 
-    if resp.status_code >= 400:
-        raise RuntimeError(f"Supabase draft save failed: {resp.status_code} {resp.text}")
+        if resp.status_code >= 400:
+            raise RuntimeError(f"{resp.status_code} {resp.text[:300]}")
 
-    return draft_id
+        _set_last_error(None)
+        return draft_id
+
+    except Exception as e:
+        # Never crash on save — fall back to local file so the user's work isn't lost.
+        _set_last_error(f"Supabase save failed ({e}) — saved locally instead.")
+        all_drafts = _local_load_all()
+        all_drafts.setdefault(owner, {})
+        all_drafts[owner][draft_id] = product
+        _local_save_all(all_drafts)
+        return draft_id
 
 
 def _get_row(draft_id: str, owner: str) -> Optional[dict]:
     resp = requests.get(
-        _table_url(),
-        headers=_headers(),
+        _table_url(), headers=_headers(),
         params={"draft_id": f"eq.{draft_id}", "owner_name": f"eq.{owner}", "select": "id", "limit": "1"},
         timeout=30,
     )
     if resp.status_code >= 400:
-        raise RuntimeError(f"Supabase lookup failed: {resp.status_code} {resp.text}")
-    rows = resp.json()
+        raise RuntimeError(f"{resp.status_code} {resp.text[:300]}")
+    rows = _safe_json(resp)
+    if not _is_list_response(rows):
+        raise RuntimeError(f"Unexpected Supabase response: {rows}")
     return rows[0] if rows else None
 
 
 def load_draft(draft_id: str) -> Optional[dict]:
-    """Load a single draft — only returns it if it belongs to the current owner."""
     owner = _owner_name()
 
     if not _using_supabase():
         return _local_load_all().get(owner, {}).get(draft_id)
 
-    resp = requests.get(
-        _table_url(),
-        headers=_headers(),
-        params={"draft_id": f"eq.{draft_id}", "owner_name": f"eq.{owner}", "select": "data", "limit": "1"},
-        timeout=30,
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"Supabase load failed: {resp.status_code} {resp.text}")
-    rows = resp.json()
-    return rows[0]["data"] if rows else None
+    try:
+        resp = requests.get(
+            _table_url(), headers=_headers(),
+            params={"draft_id": f"eq.{draft_id}", "owner_name": f"eq.{owner}", "select": "data", "limit": "1"},
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"{resp.status_code} {resp.text[:300]}")
+        rows = _safe_json(resp)
+        if not _is_list_response(rows):
+            raise RuntimeError(f"Unexpected Supabase response: {rows}")
+        return rows[0]["data"] if rows else None
+    except Exception as e:
+        _set_last_error(f"Supabase load failed ({e}) — checking local fallback.")
+        return _local_load_all().get(owner, {}).get(draft_id)
 
 
 def list_drafts(page: int = 1, page_size: int = 20) -> dict:
     """
-    Returns drafts belonging ONLY to the current logged-in owner, paginated.
-
-    Returns:
-        {"items": [product, ...], "total": int, "page": int, "page_size": int, "total_pages": int}
-
-    No cap on total drafts — page_size only controls how many are shown per page.
+    Returns drafts for the current owner, paginated. Never raises —
+    on any Supabase problem this transparently falls back to local storage
+    so the page always renders instead of crashing.
     """
-    owner  = _owner_name()
+    owner = _owner_name()
+    page  = max(1, int(page or 1))
+    page_size = max(1, int(page_size or 20))
     offset = (page - 1) * page_size
 
     if not _using_supabase():
-        all_for_owner = list(_local_load_all().get(owner, {}).values())
-        all_for_owner.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
-        total = len(all_for_owner)
-        items = all_for_owner[offset: offset + page_size]
+        return _local_list(owner, page, page_size)
+
+    try:
+        # ── Count ────────────────────────────────────────────────────
+        count_resp = requests.get(
+            _table_url(),
+            headers={**_headers(), "Prefer": "count=exact"},
+            params={"owner_name": f"eq.{owner}", "select": "id", "limit": "1"},
+            timeout=30,
+        )
+        total = 0
+        if count_resp.status_code < 400:
+            content_range = count_resp.headers.get("content-range") or ""
+            if isinstance(content_range, str) and "/" in content_range:
+                tail = content_range.split("/")[-1]
+                if tail.isdigit():
+                    total = int(tail)
+        elif count_resp.status_code == 404:
+            # Table doesn't exist yet — fall back cleanly with a clear message.
+            raise RuntimeError(
+                "Table 'product_drafts' not found in Supabase. "
+                "Create it (see draft_store.py docstring) or drafts will run in local-only mode."
+            )
+        else:
+            raise RuntimeError(f"{count_resp.status_code} {count_resp.text[:300]}")
+
+        # ── Page of results ──────────────────────────────────────────
+        resp = requests.get(
+            _table_url(), headers=_headers(),
+            params={
+                "owner_name": f"eq.{owner}",
+                "select": "data",
+                "order": "updated_at.desc",
+                "limit": str(page_size),
+                "offset": str(offset),
+            },
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"{resp.status_code} {resp.text[:300]}")
+
+        payload = _safe_json(resp)
+        if not _is_list_response(payload):
+            raise RuntimeError(f"Unexpected Supabase response shape: {str(payload)[:200]}")
+
+        items = [row.get("data", {}) for row in payload if isinstance(row, dict)]
+        _set_last_error(None)
         return _paged(items, total, page, page_size)
 
-    # Get total count first
-    count_resp = requests.get(
-        _table_url(),
-        headers={**_headers(), "Prefer": "count=exact"},
-        params={"owner_name": f"eq.{owner}", "select": "id", "limit": "1"},
-        timeout=30,
-    )
-    total = 0
-    if count_resp.status_code < 400:
-        content_range = count_resp.headers.get("content-range", "")
-        if "/" in content_range:
-            try:
-                total = int(content_range.split("/")[-1])
-            except ValueError:
-                total = 0
-
-    resp = requests.get(
-        _table_url(),
-        headers=_headers(),
-        params={
-            "owner_name": f"eq.{owner}",
-            "select": "data",
-            "order": "updated_at.desc",
-            "limit": str(page_size),
-            "offset": str(offset),
-        },
-        timeout=30,
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"Supabase list failed: {resp.status_code} {resp.text}")
-
-    items = [row["data"] for row in resp.json()]
-    return _paged(items, total, page, page_size)
+    except Exception as e:
+        _set_last_error(f"Supabase unavailable ({e}) — showing locally saved drafts instead.")
+        return _local_list(owner, page, page_size)
 
 
 def _paged(items: list, total: int, page: int, page_size: int) -> dict:
@@ -251,15 +303,23 @@ def delete_draft(draft_id: str) -> bool:
             return True
         return False
 
-    resp = requests.delete(
-        _table_url(),
-        headers=_headers(),
-        params={"draft_id": f"eq.{draft_id}", "owner_name": f"eq.{owner}"},
-        timeout=30,
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"Supabase delete failed: {resp.status_code} {resp.text}")
-    return True
+    try:
+        resp = requests.delete(
+            _table_url(), headers=_headers(),
+            params={"draft_id": f"eq.{draft_id}", "owner_name": f"eq.{owner}"},
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"{resp.status_code} {resp.text[:300]}")
+        return True
+    except Exception as e:
+        _set_last_error(f"Supabase delete failed ({e}).")
+        all_drafts = _local_load_all()
+        if draft_id in all_drafts.get(owner, {}):
+            del all_drafts[owner][draft_id]
+            _local_save_all(all_drafts)
+            return True
+        return False
 
 
 def duplicate_draft(draft_id: str) -> Optional[str]:
@@ -273,6 +333,4 @@ def duplicate_draft(draft_id: str) -> Optional[str]:
 
 
 def count_drafts() -> int:
-    """Total draft count for current owner — no cap, just informational."""
-    result = list_drafts(page=1, page_size=1)
-    return result["total"]
+    return list_drafts(page=1, page_size=1)["total"]

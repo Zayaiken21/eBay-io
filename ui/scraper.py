@@ -143,32 +143,74 @@ def _rules_for(domain: str) -> dict:
 
 # ── Main entry point ───────────────────────────────────────────────────────
 
-def fetch_product_page(url: str, timeout: int = 25) -> dict:
-    domain = get_domain(url)
-    time.sleep(random.uniform(0.4, 1.0))
+def fetch_product_page(url: str, timeout: int = 25, max_retries: int = 4) -> dict:
+    """
+    Fetches and parses a product page. Designed to work across any e-commerce
+    site, not just the ones with dedicated SITE_RULES — unknown domains fall
+    through to generic JSON-LD / Open Graph / heuristic extraction.
 
-    try:
-        s = requests.Session()
-        # Some sites need a referrer
-        hdrs = _headers()
-        if "amazon" in domain:
-            hdrs["Referer"] = "https://www.google.com/"
-        resp = s.get(url, headers=hdrs, timeout=timeout, allow_redirects=True)
-        resp.raise_for_status()
-        html = resp.text
-    except requests.exceptions.HTTPError as e:
-        code = e.response.status_code if e.response else 0
-        msg = {
-            403: "Access denied (403). This site blocks automated requests. Try copying the product details manually.",
-            404: "Page not found (404). Check the URL is correct.",
-            429: "Too many requests (429). Wait a moment and try again.",
-            503: "Site temporarily unavailable (503). Try again shortly.",
-        }.get(code, f"HTTP {code}: could not fetch page.")
-        return _err(msg)
-    except requests.exceptions.Timeout:
-        return _err("Request timed out. The site may be slow — try again.")
-    except Exception as e:
-        return _err(str(e))
+    Retries with exponential backoff + a fresh User-Agent and Referer on each
+    attempt, since many sites only block a fraction of requests (rate-limit
+    style) rather than every request outright. max_retries is generous but
+    not infinite — an unreachable site still needs to fail eventually rather
+    than hang forever.
+    """
+    domain = get_domain(url)
+    last_error = None
+
+    for attempt in range(1, max_retries + 1):
+        # Backoff before retries (not before the first attempt)
+        if attempt > 1:
+            time.sleep(min(2 ** attempt, 8) + random.uniform(0, 1))
+        else:
+            time.sleep(random.uniform(0.3, 0.9))
+
+        try:
+            s = requests.Session()
+            hdrs = _headers()
+            # A referer makes the request look like organic navigation —
+            # helps on Amazon, Walmart, and several Shopify storefronts.
+            hdrs["Referer"] = random.choice([
+                "https://www.google.com/", "https://www.bing.com/", "https://duckduckgo.com/",
+            ])
+            resp = s.get(url, headers=hdrs, timeout=timeout, allow_redirects=True)
+
+            # Retry on transient/blocking status codes; fail fast on permanent ones.
+            if resp.status_code in (429, 503, 502, 504):
+                last_error = f"HTTP {resp.status_code} (temporary) on attempt {attempt}/{max_retries}"
+                continue
+            if resp.status_code == 403 and attempt < max_retries:
+                last_error = f"HTTP 403 on attempt {attempt}/{max_retries} — retrying with new identity"
+                continue
+
+            resp.raise_for_status()
+            html = resp.text
+            break
+
+        except requests.exceptions.HTTPError as e:
+            code = e.response.status_code if e.response else 0
+            if attempt >= max_retries:
+                msg = {
+                    403: "Access denied (403) after multiple attempts. This site actively blocks automated requests — paste the product details manually instead.",
+                    404: "Page not found (404). Check the URL is correct.",
+                }.get(code, f"HTTP {code}: could not fetch page after {max_retries} attempts.")
+                return _err(msg)
+            last_error = str(e)
+            continue
+        except requests.exceptions.Timeout:
+            if attempt >= max_retries:
+                return _err(f"Request timed out after {max_retries} attempts. The site may be very slow or blocking automated traffic.")
+            last_error = "timeout"
+            continue
+        except requests.exceptions.ConnectionError as e:
+            if attempt >= max_retries:
+                return _err(f"Could not connect to {domain} after {max_retries} attempts: {e}")
+            last_error = str(e)
+            continue
+        except Exception as e:
+            return _err(str(e))
+    else:
+        return _err(f"Failed after {max_retries} attempts. Last error: {last_error}")
 
     if not BS4:
         return _err("BeautifulSoup not installed. Run: pip install beautifulsoup4 lxml")
@@ -181,6 +223,9 @@ def fetch_product_page(url: str, timeout: int = 25) -> dict:
     note = None
     if any(s in domain for s in ["aliexpress", "temu", "shein"]) and not product.get("images"):
         note = f"{domain} is JS-heavy — some images may not load. Add image URLs manually in the editor."
+    elif domain not in "".join(SITE_RULES.keys()) and product.get("confidence") == "low":
+        note = (f"{domain} isn't a site we have dedicated extraction rules for — we used generic "
+                f"JSON-LD/Open Graph/heuristic parsing. Results may be partial; fill in any gaps manually.")
 
     return {"success": True, "product": product, "note": note, "error": None}
 
@@ -254,14 +299,28 @@ def _price(soup, html, rules):
         v = tag.get("content") or tag.get_text(strip=True)
         c = _clean_price(v)
         if c: return c
+    # 3b. Common data-* price attributes used by many storefront platforms
+    for attr in ["data-price-amount", "data-price", "data-product-price", "data-amount"]:
+        tag = soup.find(attrs={attr: True})
+        if tag:
+            c = _clean_price(tag.get(attr, ""))
+            if c: return c
     # 4. Site selectors
     for sel in rules.get("price", []):
         el = soup.select_one(sel)
         if el:
             c = _clean_price(el.get("content") or el.get_text(strip=True))
             if c: return c
-    # 5. Regex
-    for pat in [r'"price"\s*:\s*"?([\d.]+)"?', r'\$([\d,]+\.?\d{0,2})', r'USD\s*([\d.]+)']:
+    # 4b. Generic class-based fallback for unknown sites — most storefronts
+    # use some variant of "price" in a class name on the main price element.
+    for el in soup.select('[class*="price" i]'):
+        txt = el.get_text(strip=True)
+        c = _clean_price(txt)
+        if c and 0 < float(c) < 100000:
+            return c
+    # 5. Regex — currency-agnostic, falls back to any plausible decimal price
+    for pat in [r'"price"\s*:\s*"?([\d.]+)"?', r'[\$£€]\s?([\d,]+\.\d{2})',
+                r'USD\s*([\d.]+)', r'price["\']?\s*[:=]\s*["\']?([\d]+\.\d{2})']:
         m = re.search(pat, html)
         if m:
             c = _clean_price(m.group(1))
@@ -436,13 +495,27 @@ def _images(soup, html, base_url, rules):
             if v and re.search(r'\.(jpg|jpeg|png|webp)', v, re.I):
                 add(v); break
 
+    # 4b. srcset / picture>source — modern responsive sites often hide the
+    # highest-resolution image here instead of in src=. Take the largest
+    # candidate (last one is usually highest-res in a srcset list).
+    for el in soup.find_all(["img", "source"]):
+        srcset = el.get("srcset", "")
+        if srcset:
+            candidates = [c.strip().split(" ")[0] for c in srcset.split(",") if c.strip()]
+            if candidates:
+                add(candidates[-1])
+
     # 5. Background images
     for m in re.finditer(r'url\(["\']?(https?://[^"\')\s]+\.(?:jpg|jpeg|png|webp))["\']?\)', html, re.I):
         add(m.group(1))
 
     # Filter: remove very small images (thumbnails often have _SX38_ etc)
     filtered = [u for u in imgs if not re.search(r'_SX\d{2}[^0-9]|_SY\d{2}[^0-9]|/\d{2}x\d{2}/', u)]
-    return (filtered or imgs)[:12]
+    candidates = filtered or imgs
+    # No hard cap on what we extract from the page — eBay listings allow up
+    # to 12 images, so we trim to that limit here since this is the bridge
+    # into a draft destined for eBay, not a general-purpose scraping limit.
+    return candidates[:12]
 
 
 def _sku(soup, html):
