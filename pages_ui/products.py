@@ -1061,6 +1061,7 @@ def _tab_store():
 
 def render_products() -> None:
     _init()
+    st.caption("🔧 BUILD MARKER: products-v3-mystore-pagination — if you don't see this on your live app, Streamlit Cloud is not running this file.")
     st.markdown(CSS, unsafe_allow_html=True)
 
     drafts_count = list_drafts(page=1, page_size=1)["total"]
