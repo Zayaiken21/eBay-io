@@ -432,8 +432,13 @@ def _tab_drafts():
         filt = st.selectbox("Filter", ["All", "Draft", "Ready", "Live", "Exported"],
                              label_visibility="collapsed", key="dfilt")
 
-    page   = st.session_state.drafts_page
-    result = list_drafts(page=page, page_size=PAGE_SIZE)
+    page = st.session_state.drafts_page
+    try:
+        result = list_drafts(page=page, page_size=PAGE_SIZE)
+    except Exception as e:
+        st.error(f"⚠️ Could not load drafts: {e}")
+        st.caption("Check that `core/draft_store.py` is the latest version and the `product_drafts` table exists in Supabase.")
+        return
     drafts = result["items"]
 
     if result["total"] == 0:
@@ -1064,7 +1069,16 @@ def render_products() -> None:
     st.caption("🔧 BUILD MARKER: products-v3-mystore-pagination — if you don't see this on your live app, Streamlit Cloud is not running this file.")
     st.markdown(CSS, unsafe_allow_html=True)
 
-    drafts_count = list_drafts(page=1, page_size=1)["total"]
+    try:
+        drafts_count = list_drafts(page=1, page_size=1)["total"]
+    except Exception as e:
+        st.error(
+            f"⚠️ Could not load drafts from the database: {e}\n\n"
+            "This usually means `core/draft_store.py` in this deployment is an older "
+            "version, or the `product_drafts` table doesn't exist yet in Supabase. "
+            "Drafts will not work correctly until this is fixed."
+        )
+        drafts_count = 0
 
     try:
         store_err = get_last_error()
