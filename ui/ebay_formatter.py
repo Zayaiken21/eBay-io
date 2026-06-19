@@ -3,6 +3,13 @@ ebay_formatter.py — Generates professional eBay listing HTML and structured ex
 The HTML template follows eBay best practices for high-conversion listings.
 """
 
+import re
+
+def _sanitize_ebay_sku(value: str, fallback_title: str = "") -> str:
+    raw = str(value or "").strip() or str(fallback_title or "ITEM")
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
+    return (cleaned or "ITEM")[:50]
+
 
 def generate_ebay_html(product: dict) -> str:
     """
@@ -300,7 +307,7 @@ def generate_ebay_export(product: dict) -> dict:
         "condition": product.get("condition", "New"),
         "price": product.get("price", ""),
         "brand": product.get("brand", ""),
-        "sku": product.get("sku", ""),
+        "sku": _sanitize_ebay_sku(product.get("sku", ""), product.get("title", "")),
         "images": product.get("images", [])[:12],  # eBay max 12 images
         "item_specifics": _build_item_specifics(product),
         "tags": product.get("tags", []),

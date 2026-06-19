@@ -14,6 +14,7 @@ eBay upload: core.ebay_account_store handles token refresh — always fresh,
              never a stale "please sign in" when already connected.
 """
 
+import re
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -192,6 +193,57 @@ def _owner() -> str:
 
 def _set_tab(tab: str):
     st.session_state.prod_tab = tab
+
+def _sanitize_ebay_sku(value: str, fallback_title: str = "") -> str:
+    """
+    eBay returned 25707 for punctuation in SKUs, so we force strictly
+    alphanumeric SKUs and cap them at 50 characters.
+    """
+    raw = str(value or "").strip()
+    base = raw or str(fallback_title or "ITEM")
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", base).upper()
+    if not cleaned:
+        cleaned = "ITEM"
+    return cleaned[:50]
+
+
+def _normalize_product_for_ebay(product: dict) -> dict:
+    """Return a copy with an eBay-safe SKU before export or upload."""
+    p = dict(product or {})
+    p["sku"] = _sanitize_ebay_sku(p.get("sku"), p.get("title"))
+    return p
+
+
+def _list_drafts_safe(page: int = 1, page_size=None) -> dict:
+    """
+    Calls the new paginated draft_store.list_drafts(), but gracefully handles
+    an older deployed draft_store.py so the page does not crash while Cloud
+    catches up to the latest file.
+
+    page_size intentionally defaults to None instead of PAGE_SIZE because
+    PAGE_SIZE is defined later in this file. This avoids IDE/linter
+    "Unresolved reference PAGE_SIZE" warnings while keeping the same runtime behavior.
+    """
+    if page_size is None:
+        page_size = PAGE_SIZE if "PAGE_SIZE" in globals() else 12
+
+    try:
+        return list_drafts(page=page, page_size=page_size)
+    except TypeError as e:
+        if "unexpected keyword argument" not in str(e):
+            raise
+        legacy_items = list_drafts() or []
+        if isinstance(legacy_items, dict) and "items" in legacy_items:
+            return legacy_items
+        if not isinstance(legacy_items, list):
+            legacy_items = []
+        total = len(legacy_items)
+        page = max(1, int(page or 1))
+        page_size = max(1, int(page_size or 20))
+        start = (page - 1) * page_size
+        items = legacy_items[start:start + page_size]
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        return {"items": items, "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}
 
 
 # ─── Hero & account banner ────────────────────────────────────────────────────
@@ -434,7 +486,7 @@ def _tab_drafts():
 
     page = st.session_state.drafts_page
     try:
-        result = list_drafts(page=page, page_size=PAGE_SIZE)
+        result = _list_drafts_safe(page=page, page_size=PAGE_SIZE)
     except Exception as e:
         st.error(f"⚠️ Could not load drafts: {e}")
         st.caption("Check that `core/draft_store.py` is the latest version and the `product_drafts` table exists in Supabase.")
@@ -659,7 +711,7 @@ def _tab_editor():
 
         c4, c5 = st.columns(2)
         with c4: p["brand"] = st.text_input("Brand", value=p.get("brand",""), key="ed_brand")
-        with c5: p["sku"]   = st.text_input("SKU",   value=p.get("sku",""),   key="ed_sku")
+        with c5: p["sku"]   = _sanitize_ebay_sku(st.text_input("SKU", value=p.get("sku",""), key="ed_sku"), p.get("title",""))
 
         c6, c7 = st.columns(2)
         with c6: p["weight"]     = st.text_input("Weight",     value=p.get("weight",""),     key="ed_wt")
@@ -769,6 +821,7 @@ def _tab_editor():
     cg, cp2, cclose = st.columns([3, 2, 2])
     with cg:
         if st.button("📋 Generate eBay Listing", type="primary", use_container_width=True):
+            p = _normalize_product_for_ebay(p)
             p["ebay_html"] = generate_ebay_html(p)
             p["status"]    = "ready"
             save_draft(p, did)
@@ -955,6 +1008,8 @@ def _upload_panel(p: dict, exp: dict):
     if st.button("🚀 Publish to eBay", type="primary",
                  use_container_width=True, disabled=missing_policies):
         with st.spinner("Publishing to eBay…"):
+            p = _normalize_product_for_ebay(p)
+            st.session_state.edit_product = p
             result = upload_to_ebay(p)
         st.session_state.upload_result = result
         if result["success"]:
@@ -1066,11 +1121,10 @@ def _tab_store():
 
 def render_products() -> None:
     _init()
-    st.caption("🔧 BUILD MARKER: products-v3-mystore-pagination — if you don't see this on your live app, Streamlit Cloud is not running this file.")
     st.markdown(CSS, unsafe_allow_html=True)
 
     try:
-        drafts_count = list_drafts(page=1, page_size=1)["total"]
+        drafts_count = _list_drafts_safe(page=1, page_size=1)["total"]
     except Exception as e:
         st.error(
             f"⚠️ Could not load drafts from the database: {e}\n\n"
