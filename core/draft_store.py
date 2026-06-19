@@ -1,85 +1,128 @@
 """
-draft_store.py — Persistent draft storage using a local JSON file.
-Drafts are saved to drafts.json in the working directory.
+draft_store.py — Per-user local draft storage. No Supabase required.
+
+Every signed-in user is isolated by owner_name from Streamlit session:
+- client_name for client logins
+- "ceo" for CEO login
+- "default" only as a last fallback
+
+Data file: data/product_drafts_local.json
 """
 
 import json
-import os
 import uuid
-from datetime import datetime
+from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional
 
-DRAFTS_FILE = "drafts.json"
+import streamlit as st
+
+DATA_DIR = Path("data")
+DRAFT_FILE = DATA_DIR / "product_drafts_local.json"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _owner_name() -> str:
+    client_name = st.session_state.get("client_name") or ""
+    role = st.session_state.get("role") or ""
+    if client_name:
+        return client_name.strip()
+    if role == "ceo":
+        return "ceo"
+    return "default"
+
+
+def _ensure_file() -> None:
+    DATA_DIR.mkdir(exist_ok=True)
+    if not DRAFT_FILE.exists():
+        DRAFT_FILE.write_text("{}", encoding="utf-8")
 
 
 def _load_all() -> dict:
-    if not os.path.exists(DRAFTS_FILE):
-        return {}
+    _ensure_file()
     try:
-        with open(DRAFTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
+        data = json.loads(DRAFT_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        DRAFT_FILE.write_text("{}", encoding="utf-8")
         return {}
 
 
 def _save_all(data: dict) -> None:
-    with open(DRAFTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    _ensure_file()
+    DRAFT_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+
+
+def get_last_error() -> Optional[str]:
+    return None
+
+
+def _paged(items: list, total: int, page: int, page_size: int) -> dict:
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = min(max(1, page), total_pages)
+    return {"items": items, "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}
 
 
 def save_draft(product: dict, draft_id: Optional[str] = None) -> str:
-    """
-    Save or update a draft. Returns the draft_id.
-    If draft_id is None, creates a new draft with a generated ID.
-    """
-    all_drafts = _load_all()
+    owner = _owner_name()
+    data = _load_all()
+    data.setdefault(owner, {})
 
     if draft_id is None:
         draft_id = str(uuid.uuid4())[:8]
 
-    product = dict(product)  # shallow copy
+    now = _now_iso()
+    existing = data[owner].get(draft_id, {})
+    product = dict(product or {})
     product["draft_id"] = draft_id
-    product["updated_at"] = datetime.now().isoformat()
+    product["owner_name"] = owner
+    product["created_at"] = existing.get("created_at") or product.get("created_at") or now
+    product["updated_at"] = now
+    product.setdefault("status", "draft")
 
-    if draft_id not in all_drafts:
-        product["created_at"] = product["updated_at"]
-    else:
-        product["created_at"] = all_drafts[draft_id].get("created_at", product["updated_at"])
-
-    all_drafts[draft_id] = product
-    _save_all(all_drafts)
+    data[owner][draft_id] = product
+    _save_all(data)
     return draft_id
 
 
 def load_draft(draft_id: str) -> Optional[dict]:
-    """Load a single draft by ID. Returns None if not found."""
-    return _load_all().get(draft_id)
+    owner = _owner_name()
+    return _load_all().get(owner, {}).get(draft_id)
 
 
-def list_drafts() -> list[dict]:
-    """Return all drafts sorted by updated_at descending."""
-    all_drafts = _load_all()
-    drafts = list(all_drafts.values())
-    drafts.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
-    return drafts
+def list_drafts(page: int = 1, page_size: int = 20) -> dict:
+    owner = _owner_name()
+    page = max(1, int(page or 1))
+    page_size = max(1, int(page_size or 20))
+
+    items = list(_load_all().get(owner, {}).values())
+    items.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
+    total = len(items)
+    start = (page - 1) * page_size
+    return _paged(items[start:start + page_size], total, page, page_size)
 
 
 def delete_draft(draft_id: str) -> bool:
-    """Delete a draft. Returns True if deleted, False if not found."""
-    all_drafts = _load_all()
-    if draft_id in all_drafts:
-        del all_drafts[draft_id]
-        _save_all(all_drafts)
+    owner = _owner_name()
+    data = _load_all()
+    if draft_id in data.get(owner, {}):
+        del data[owner][draft_id]
+        _save_all(data)
         return True
     return False
 
 
 def duplicate_draft(draft_id: str) -> Optional[str]:
-    """Duplicate a draft and return the new ID."""
-    original = load_draft(draft_id)
-    if not original:
+    src = load_draft(draft_id)
+    if not src:
         return None
-    copy = dict(original)
-    copy["title"] = f"{copy.get('title', 'Untitled')} (Copy)"
+    copy = dict(src)
     copy.pop("draft_id", None)
+    copy["title"] = f"{copy.get('title', 'Untitled')} (Copy)"
+    copy["status"] = "draft"
+    copy.pop("ebay_listing_id", None)
+    copy.pop("ebay_listing_url", None)
     return save_draft(copy)

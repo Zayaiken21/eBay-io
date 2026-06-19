@@ -6,6 +6,7 @@ Used by the "My Store" tab so sellers can see what's already listed and
 pull any of them back into the draft editor to make changes.
 """
 
+import re
 import requests
 import streamlit as st
 
@@ -27,6 +28,15 @@ def _resolve_env(account: dict) -> tuple[str, str]:
     api_base = "https://api.sandbox.ebay.com" if env != "production" else "https://api.ebay.com"
     return env, api_base
 
+
+
+
+def _valid_ebay_sku(sku: str) -> bool:
+    return bool(sku) and len(str(sku)) <= 50 and re.fullmatch(r"[A-Za-z0-9]+", str(sku)) is not None
+
+def _safe_title(text: str) -> str:
+    text = re.sub(r"(?s)<[^>]+>", " ", str(text or ""))
+    return re.sub(r"\s+", " ", text).strip()
 
 def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
     """
@@ -77,7 +87,10 @@ def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
         return _err(f"Could not reach eBay: {e}")
 
     if resp.status_code >= 400:
-        return _err(_safe_text(resp))
+        msg = _safe_text(resp)
+        if "25707" in msg or "invalid value for a SKU" in msg.lower():
+            return _fetch_inventory_items(api_base, hdrs, env, page, page_size)
+        return _err(msg)
 
     data  = resp.json()
     total = data.get("total", 0)
@@ -89,7 +102,7 @@ def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
             "sku":         o.get("sku", ""),
             "offer_id":    o.get("offerId", ""),
             "listing_id":  o.get("listing", {}).get("listingId", ""),
-            "title":       o.get("listingDescription") or _title_from_sku(o.get("sku","")),
+            "title":       _safe_title(o.get("listingDescription") or _title_from_sku(o.get("sku",""))),
             "price":       (o.get("pricingSummary", {}).get("price", {}) or {}).get("value", ""),
             "currency":    (o.get("pricingSummary", {}).get("price", {}) or {}).get("currency", "USD"),
             "quantity":    o.get("availableQuantity", 0),
@@ -110,6 +123,9 @@ def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
 
 
 def fetch_inventory_item(sku: str) -> dict:
+    sku = str(sku or "").strip()
+    if not _valid_ebay_sku(sku):
+        return {"success": False, "product": None, "error": "This existing eBay SKU contains characters this app/account cannot fetch safely. Create a new cleaned listing instead."}
     """
     Fetches full inventory item detail (images, description, aspects) for a
     single SKU — used when a seller clicks "Edit" on a live listing so we can

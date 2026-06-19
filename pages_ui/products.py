@@ -195,16 +195,10 @@ def _set_tab(tab: str):
     st.session_state.prod_tab = tab
 
 def _sanitize_ebay_sku(value: str, fallback_title: str = "") -> str:
-    """
-    eBay returned 25707 for punctuation in SKUs, so we force strictly
-    alphanumeric SKUs and cap them at 50 characters.
-    """
-    raw = str(value or "").strip()
-    base = raw or str(fallback_title or "ITEM")
-    cleaned = re.sub(r"[^A-Za-z0-9]", "", base).upper()
-    if not cleaned:
-        cleaned = "ITEM"
-    return cleaned[:50]
+    """Strict eBay-safe SKU for this account: A-Z/0-9 only, max 50."""
+    raw = str(value or "").strip() or str(fallback_title or "ITEM")
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
+    return (cleaned or "ITEM")[:50]
 
 
 def _normalize_product_for_ebay(product: dict) -> dict:

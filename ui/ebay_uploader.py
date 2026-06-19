@@ -47,9 +47,44 @@ def _guess_category_id(category: str) -> str:
     return CATEGORY_MAP["other"]
 
 def _sanitize_sku(title: str, draft_id: str) -> str:
-    safe = re.sub(r"[^a-zA-Z0-9\-]", "-", (title or "item")[:30])
-    safe = re.sub(r"-{2,}", "-", safe).strip("-")
-    return f"{safe}-{draft_id}"[:50]
+    """eBay in this account rejects punctuation, so force A-Z/0-9 only, max 50."""
+    raw = f"{title or 'ITEM'}{draft_id or ''}"
+    safe = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
+    return (safe or "ITEM")[:50]
+
+
+
+def _strip_html(text: str) -> str:
+    text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", str(text or ""))
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = re.sub(r"&nbsp;", " ", text)
+    text = re.sub(r"&amp;", "&", text)
+    text = re.sub(r"&lt;", "<", text)
+    text = re.sub(r"&gt;", ">", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _safe_inventory_description(product: dict) -> str:
+    """Inventory API product.description must be plain-ish text, 1-4000 chars."""
+    parts = [
+        product.get("description", ""),
+        " ".join(product.get("features") or []),
+        product.get("title", ""),
+    ]
+    text = _strip_html("\n".join(str(p) for p in parts if p))
+    if not text:
+        text = f"Quality product: {product.get('title', 'Item')}"
+    return text[:3990]
+
+
+def _safe_listing_description(product: dict) -> str:
+    """Offer listingDescription can be richer, but keep it safe and below eBay limits."""
+    text = product.get("ebay_html") or product.get("description") or product.get("title") or "Quality item."
+    text = str(text).strip()
+    if len(text) > 490000:
+        text = text[:490000]
+    return text or "Quality item."
+
 
 def _map_condition(condition: str) -> str:
     return {
@@ -219,19 +254,20 @@ def upload_to_ebay(product: dict) -> dict:
         "X-EBAY-C-MARKETPLACE-ID": marketplace,
     }
 
-    sku   = _sanitize_sku(product.get("title", ""), product.get("draft_id", "001"))
+    sku   = _sanitize_sku(product.get("sku") or product.get("title", ""), product.get("draft_id", "001"))
     price = product.get("price") or "9.99"
     try:    float(price)
     except: price = "9.99"
 
     # ── 2. Create / update inventory item ─────────────────────────────────
     images    = [u for u in (product.get("images") or []) if u.startswith("http")][:12]
-    desc_html = product.get("ebay_html") or product.get("description") or ""
+    inventory_desc = _safe_inventory_description(product)
+    listing_desc = _safe_listing_description(product)
 
     inventory_payload = {
         "product": {
             "title":       product.get("title", "")[:80],
-            "description": desc_html,
+            "description": inventory_desc,
             "imageUrls":   images,
             "aspects":     _build_aspects(product),
         },
@@ -244,8 +280,7 @@ def upload_to_ebay(product: dict) -> dict:
     }
     if product.get("brand"):
         inventory_payload["product"]["brand"] = product["brand"]
-    if product.get("sku"):
-        inventory_payload["product"]["mpn"] = product["sku"]
+    inventory_payload["product"]["mpn"] = sku
 
     inv_resp = requests.put(
         f"{api_base}/sell/inventory/v1/inventory_item/{sku}",
@@ -263,7 +298,7 @@ def upload_to_ebay(product: dict) -> dict:
         "format":              "FIXED_PRICE",
         "availableQuantity":   max(1, int(product.get("quantity", 1))),
         "categoryId":          _guess_category_id(product.get("category", "")),
-        "listingDescription":  desc_html,
+        "listingDescription":  listing_desc,
         "pricingSummary": {
             "price": {"value": price, "currency": "USD"}
         },
