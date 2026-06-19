@@ -10,6 +10,7 @@ Auth flow:
 
 import re
 import json
+import hashlib
 import requests
 import streamlit as st
 
@@ -47,11 +48,25 @@ def _guess_category_id(category: str) -> str:
     return CATEGORY_MAP["other"]
 
 def _sanitize_sku(title: str, draft_id: str) -> str:
-    """eBay in this account rejects punctuation, so force A-Z/0-9 only, max 50."""
+    """
+    Final eBay-safe SKU generator.
+    This account's eBay API rejects ALL punctuation, so SKU must be:
+    A-Z / 0-9 only, 1-50 chars.
+    """
     raw = f"{title or 'ITEM'}{draft_id or ''}"
-    safe = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
-    return (safe or "ITEM")[:50]
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", str(raw)).upper()
 
+    # Add a short alphanumeric hash so duplicate product titles do not reuse the same SKU.
+    digest = hashlib.sha1(str(raw).encode("utf-8", errors="ignore")).hexdigest()[:8].upper()
+    base = cleaned[:38] if cleaned else "ITEM"
+    sku = f"{base}{digest}"
+
+    sku = re.sub(r"[^A-Za-z0-9]", "", sku).upper()[:50]
+    return sku or "ITEM001"
+
+
+def _is_valid_sku(sku: str) -> bool:
+    return bool(sku) and len(str(sku)) <= 50 and re.fullmatch(r"[A-Za-z0-9]+", str(sku)) is not None
 
 
 def _strip_html(text: str) -> str:
@@ -255,6 +270,8 @@ def upload_to_ebay(product: dict) -> dict:
     }
 
     sku   = _sanitize_sku(product.get("sku") or product.get("title", ""), product.get("draft_id", "001"))
+    if not _is_valid_sku(sku):
+        return _err(f"Generated invalid SKU before eBay call: {sku!r}")
     price = product.get("price") or "9.99"
     try:    float(price)
     except: price = "9.99"
@@ -289,7 +306,7 @@ def upload_to_ebay(product: dict) -> dict:
         timeout=30,
     )
     if inv_resp.status_code not in (200, 201, 204):
-        return _err(f"Inventory item failed ({inv_resp.status_code}): {_safe_text(inv_resp)}")
+        return _err(f"Inventory item failed ({inv_resp.status_code}) for SKU {sku}: {_safe_text(inv_resp)}")
 
     # ── 3. Create or update offer ─────────────────────────────────────────
     offer_payload = {

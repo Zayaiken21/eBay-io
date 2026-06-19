@@ -122,6 +122,68 @@ def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
     }
 
 
+def _fetch_inventory_items(api_base: str, hdrs: dict, env: str, page: int = 1, page_size: int = 25) -> dict:
+    """
+    Fallback for accounts where /offer returns eBay SKU validation error because
+    legacy inventory contains punctuation-based SKUs. This endpoint lists inventory
+    items without passing a SKU value back to eBay.
+    """
+    offset = (max(1, int(page or 1)) - 1) * max(1, int(page_size or 25))
+    limit = max(1, int(page_size or 25))
+
+    try:
+        resp = requests.get(
+            f"{api_base}/sell/inventory/v1/inventory_item",
+            headers=hdrs,
+            params={"limit": str(limit), "offset": str(offset)},
+            timeout=30,
+        )
+    except Exception as e:
+        return _err(f"Could not reach eBay inventory items: {e}")
+
+    if resp.status_code >= 400:
+        return _err(_safe_text(resp))
+
+    data = resp.json()
+    rows = data.get("inventoryItems", []) or []
+    total = int(data.get("total", offset + len(rows)) or 0)
+
+    items = []
+    for row in rows:
+        sku = row.get("sku", "")
+        inv = row.get("inventoryItem", {}) or {}
+        product = inv.get("product", {}) or {}
+        availability = inv.get("availability", {}) or {}
+        qty = (availability.get("shipToLocationAvailability", {}) or {}).get("quantity", 0)
+
+        items.append({
+            "sku": sku,
+            "offer_id": "",
+            "listing_id": "",
+            "title": _safe_title(product.get("title") or _title_from_sku(sku)),
+            "price": "",
+            "currency": "USD",
+            "quantity": qty,
+            "status": "INVENTORY",
+            "category_id": "",
+            "listing_url": "",
+            "sku_valid": _valid_ebay_sku(sku),
+        })
+
+    total_pages = max(1, (total + limit - 1) // limit)
+    return {
+        "success": True,
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": limit,
+        "total_pages": total_pages,
+        "environment": env,
+        "error": None,
+        "warning": "Loaded inventory items because eBay rejected the offer list due to an existing invalid SKU.",
+    }
+
+
 def fetch_inventory_item(sku: str) -> dict:
     sku = str(sku or "").strip()
     if not _valid_ebay_sku(sku):
