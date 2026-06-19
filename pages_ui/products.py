@@ -177,6 +177,9 @@ def _init():
         "drafts_page":      1,
         "store_page":       1,
         "store_data":       None,
+        "bot_wall_blocked": False,
+        "bot_wall_url":      "",
+        "bot_wall_domain":   "",
     }.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -194,50 +197,12 @@ def _owner() -> str:
 def _set_tab(tab: str):
     st.session_state.prod_tab = tab
 
-def _sanitize_ebay_sku(value: str, fallback_title: str = "") -> str:
-    """Strict eBay-safe SKU for this account: A-Z/0-9 only, max 50."""
-    raw = str(value or "").strip() or str(fallback_title or "ITEM")
-    cleaned = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
-    return (cleaned or "ITEM")[:50]
-
-
-def _normalize_product_for_ebay(product: dict) -> dict:
-    """Return a copy with an eBay-safe SKU before export or upload."""
-    p = dict(product or {})
-    p["sku"] = _sanitize_ebay_sku(p.get("sku"), p.get("title"))
-    return p
-
-
-def _list_drafts_safe(page: int = 1, page_size=None) -> dict:
-    """
-    Calls the new paginated draft_store.list_drafts(), but gracefully handles
-    an older deployed draft_store.py so the page does not crash while Cloud
-    catches up to the latest file.
-
-    page_size intentionally defaults to None instead of PAGE_SIZE because
-    PAGE_SIZE is defined later in this file. This avoids IDE/linter
-    "Unresolved reference PAGE_SIZE" warnings while keeping the same runtime behavior.
-    """
-    if page_size is None:
-        page_size = PAGE_SIZE if "PAGE_SIZE" in globals() else 12
-
+def _domain_from_url(url: str) -> str:
+    from urllib.parse import urlparse
     try:
-        return list_drafts(page=page, page_size=page_size)
-    except TypeError as e:
-        if "unexpected keyword argument" not in str(e):
-            raise
-        legacy_items = list_drafts() or []
-        if isinstance(legacy_items, dict) and "items" in legacy_items:
-            return legacy_items
-        if not isinstance(legacy_items, list):
-            legacy_items = []
-        total = len(legacy_items)
-        page = max(1, int(page or 1))
-        page_size = max(1, int(page_size or 20))
-        start = (page - 1) * page_size
-        items = legacy_items[start:start + page_size]
-        total_pages = max(1, (total + page_size - 1) // page_size)
-        return {"items": items, "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}
+        return urlparse(url).netloc.lower().replace("www.", "")
+    except Exception:
+        return ""
 
 
 # ─── Hero & account banner ────────────────────────────────────────────────────
@@ -373,11 +338,17 @@ def _tab_import():
     if st.session_state.import_result:
         _show_import_result(st.session_state.import_result)
 
+    if st.session_state.get("bot_wall_blocked"):
+        _show_manual_entry_form()
+
 
 def _run_import(url: str):
     """
     Imports a product AND automatically applies SEO optimization —
-    no button click required. This always runs; there is no manual-only path.
+    no button click required. This always runs; there is no manual-only path
+    UNLESS the source site blocks the request with a bot-check page, in which
+    case we route straight to a polished manual entry form instead of
+    confusingly extracting garbage from the challenge page.
     """
     bar = st.progress(0, text="Starting...")
     bar.progress(15, "📡 Connecting to store...")
@@ -386,8 +357,16 @@ def _run_import(url: str):
 
     if not result["success"]:
         bar.empty()
-        st.error(f"❌ {result['error']}")
+        if result.get("bot_wall"):
+            st.error(f"🛑 {result['error']}")
+            st.session_state.bot_wall_blocked = True
+            st.session_state.bot_wall_url     = url
+            st.session_state.bot_wall_domain  = _domain_from_url(url)
+        else:
+            st.error(f"❌ {result['error']}")
         return
+
+    st.session_state.bot_wall_blocked = False
 
     if result.get("note"):
         st.info(f"ℹ️ {result['note']}")
@@ -465,6 +444,90 @@ def _show_import_result(p: dict):
             st.session_state.import_result = None; st.rerun()
 
 
+def _show_manual_entry_form():
+    """
+    Shown automatically when a source site blocks automated fetching with a
+    bot-check/CAPTCHA page (Walmart, Amazon, and similar large retailers do
+    this routinely). Pre-fills whatever context we have (domain, source URL)
+    and lets the seller paste in the rest by hand — the durable, reliable
+    path for sites with strong anti-automation protection.
+    """
+    domain = st.session_state.get("bot_wall_domain", "")
+    src_url = st.session_state.get("bot_wall_url", "")
+
+    st.markdown(f"""
+    <div class="import-box" style="border-color:#fbd38d;background:linear-gradient(135deg,#fff8f0,#fff3e0);">
+      <h3 style="color:#92400e;">✋ Manual Entry — {domain or "this site"} blocked automated access</h3>
+      <p style="color:#744210;">
+        This site uses anti-bot protection (CAPTCHA / "press and hold to verify you're human")
+        that no page-fetching tool can pass — only a real browser with a human
+        actually completing the challenge can get through. Paste the product details
+        below and we'll still auto-apply SEO optimization, image handling, and
+        eBay formatting exactly like an automatic import.
+      </p>
+    </div>""", unsafe_allow_html=True)
+
+    with st.form("manual_entry_form", clear_on_submit=False):
+        st.text_input("Source URL (for reference)", value=src_url, disabled=True)
+
+        m_title = st.text_input("Product Title*", placeholder="Paste the exact product title from the page")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            m_price = st.text_input("Price (USD)", placeholder="29.99")
+        with col2:
+            m_brand = st.text_input("Brand", placeholder="e.g. Crest")
+        with col3:
+            m_condition = st.selectbox("Condition", ["New", "New with tags", "Pre-owned", "Good", "For parts"])
+
+        m_category = st.text_input("Category", placeholder="e.g. Health & Beauty > Oral Care")
+        m_description = st.text_area("Description", height=150,
+            placeholder="Paste the product description from the page")
+        m_features = st.text_area("Key Features (one per line)", height=100,
+            placeholder="Long-lasting mint flavor\n3-pack\nWhitens teeth")
+        m_image_urls = st.text_area("Image URLs (one per line)", height=100,
+            placeholder="Right-click each product photo → Copy Image Address → paste here, one per line")
+
+        submitted = st.form_submit_button("✨ Create Draft & Auto-Optimize", type="primary")
+
+    if submitted:
+        if not m_title.strip():
+            st.warning("Product title is required.")
+            return
+
+        clean_price = re.sub(r"[^\d.]", "", m_price) if m_price else ""
+
+        product = {
+            "title":          m_title.strip(),
+            "price":          clean_price,
+            "brand":          m_brand.strip(),
+            "condition":      m_condition,
+            "category":       m_category.strip(),
+            "description":    m_description.strip(),
+            "features":       [f.strip() for f in m_features.splitlines() if f.strip()],
+            "specifications": {},
+            "images":         [u.strip() for u in m_image_urls.splitlines() if u.strip().startswith("http")],
+            "sku":            "",
+            "weight":         "",
+            "dimensions":     "",
+            "variants":       [],
+            "tags":           [],
+            "domain":         domain,
+            "source_url":     src_url,
+            "status":         "draft",
+            "currency":       "USD",
+            "confidence":     "manual",
+        }
+
+        product = auto_seo_optimize(product)
+        product["seo_auto_applied"] = True
+
+        did = save_draft(product)
+        st.success(f"✅ Draft created and SEO-optimized — ID `{did}`")
+        st.session_state.bot_wall_blocked = False
+        _open_editor(did)
+        st.rerun()
+
+
 # ─── DRAFTS TAB ───────────────────────────────────────────────────────────────
 
 PAGE_SIZE = 12
@@ -480,7 +543,7 @@ def _tab_drafts():
 
     page = st.session_state.drafts_page
     try:
-        result = _list_drafts_safe(page=page, page_size=PAGE_SIZE)
+        result = list_drafts(page=page, page_size=PAGE_SIZE)
     except Exception as e:
         st.error(f"⚠️ Could not load drafts: {e}")
         st.caption("Check that `core/draft_store.py` is the latest version and the `product_drafts` table exists in Supabase.")
@@ -705,7 +768,7 @@ def _tab_editor():
 
         c4, c5 = st.columns(2)
         with c4: p["brand"] = st.text_input("Brand", value=p.get("brand",""), key="ed_brand")
-        with c5: p["sku"]   = _sanitize_ebay_sku(st.text_input("SKU", value=p.get("sku",""), key="ed_sku"), p.get("title",""))
+        with c5: p["sku"]   = st.text_input("SKU",   value=p.get("sku",""),   key="ed_sku")
 
         c6, c7 = st.columns(2)
         with c6: p["weight"]     = st.text_input("Weight",     value=p.get("weight",""),     key="ed_wt")
@@ -815,7 +878,6 @@ def _tab_editor():
     cg, cp2, cclose = st.columns([3, 2, 2])
     with cg:
         if st.button("📋 Generate eBay Listing", type="primary", use_container_width=True):
-            p = _normalize_product_for_ebay(p)
             p["ebay_html"] = generate_ebay_html(p)
             p["status"]    = "ready"
             save_draft(p, did)
@@ -904,8 +966,8 @@ def _upload_panel(p: dict, exp: dict):
     try:
         info = get_account_info()
     except Exception as e:
-        st.error(f"❌ Could not read connected eBay account: {e}")
-        st.caption(f"Resolved owner_name: `{owner}` · Reconnect eBay in Settings if this account is missing or expired.")
+        st.error(f"❌ Could not read eBay account from Supabase: {e}")
+        st.caption(f"Resolved owner_name: `{owner}` · Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in secrets.")
         return
 
     if not info:
@@ -981,24 +1043,12 @@ def _upload_panel(p: dict, exp: dict):
             p["return_policy_id"] = st.text_input("Return Policy ID",
                 value=p.get("return_policy_id",""), key="pol_r_txt")
 
-    locs = policies.get("locations", [])
-    if locs:
-        loc_labels = [x.get("label") or x.get("name") or x.get("key") for x in locs]
-        current_key = p.get("merchant_location_key", "")
-        current_idx = 0
-        for i, x in enumerate(locs):
-            if x.get("key") == current_key:
-                current_idx = i
-                break
-        loc_sel = st.selectbox("Inventory Location", loc_labels, index=current_idx, key="loc_key_select")
-        p["merchant_location_key"] = next(
-            (x.get("key") for x in locs if (x.get("label") or x.get("name") or x.get("key")) == loc_sel),
-            locs[0].get("key"),
-        )
-        st.caption(f"Using merchantLocationKey: `{p['merchant_location_key']}`")
-    else:
-        p["merchant_location_key"] = "MAINWAREHOUSE"
-        st.info("No eBay inventory location was returned. The uploader will automatically create/use `MAINWAREHOUSE` as a warehouse location before publishing.")
+    p["merchant_location_key"] = st.text_input(
+        "Merchant Location Key",
+        value=p.get("merchant_location_key","default"),
+        key="loc_key",
+        help="Set up in eBay Seller Hub → Locations. Usually 'default' for single-location sellers."
+    )
 
     p["ebay_html"] = exp.get("description_html", "")
     st.session_state.edit_product = p
@@ -1014,8 +1064,6 @@ def _upload_panel(p: dict, exp: dict):
     if st.button("🚀 Publish to eBay", type="primary",
                  use_container_width=True, disabled=missing_policies):
         with st.spinner("Publishing to eBay…"):
-            p = _normalize_product_for_ebay(p)
-            st.session_state.edit_product = p
             result = upload_to_ebay(p)
         st.session_state.upload_result = result
         if result["success"]:
@@ -1043,7 +1091,7 @@ def _upload_panel(p: dict, exp: dict):
             with st.expander("Troubleshooting"):
                 st.markdown("""
 - **Policy IDs**: Must be valid policies from your own eBay account, matching the environment (sandbox policies won't work in production and vice versa)
-- **Inventory Location**: The app now auto-fetches or creates a real eBay warehouse location key before publishing
+- **Merchant Location**: Must match a location key set up in eBay Seller Hub → Locations
 - **Token**: If you reconnected eBay recently and still see auth errors, disconnect and reconnect in Settings
 - **Content-Language**: Handled automatically (en-US) — no action needed
                 """)
@@ -1094,47 +1142,30 @@ def _tab_store():
         st.info("No live listings found on your eBay store yet.")
         return
 
-    source_note = data.get("source", "eBay")
     st.markdown(f"<div style='font-size:12px;color:#718096;margin-bottom:12px;'>"
-                f"{data['total']} live listings · page {data['page']} of {data['total_pages']} · source: {source_note}</div>",
+                f"{data['total']} live listings · page {data['page']} of {data['total_pages']}</div>",
                 unsafe_allow_html=True)
 
     for item in data["items"]:
-        cimg, c1, c2, c3 = st.columns([1, 4, 2, 2])
-        with cimg:
-            if item.get("image_url"):
-                try:
-                    st.image(item.get("image_url"), width=64)
-                except Exception:
-                    st.markdown("📦")
-            else:
-                st.markdown("📦")
+        c1, c2, c3 = st.columns([4, 2, 2])
         with c1:
-            price_val = item.get('price') or '—'
-            qty_val = item.get('quantity')
-            qty_text = f"Qty: {qty_val}" if qty_val not in (None, '') else "Live listing"
             st.markdown(f"""
             <div class="store-row">
-              <div class="draft-title">{item.get('title','Untitled Listing')[:90]}</div>
+              <div class="draft-title">{item['title'][:70]}</div>
               <div class="draft-meta">
-                <span class="badge b-live">{item.get('status','LIVE')}</span>
-                <span>${price_val}</span>
-                <span>{qty_text}</span>
-                <span class="store-sku">SKU/ID: {item.get('sku') or item.get('listing_id','')}</span>
+                <span class="badge b-live">{item.get('status','ACTIVE')}</span>
+                <span>${item.get('price','—')}</span>
+                <span>Qty: {item.get('quantity', 0)}</span>
+                <span class="store-sku">SKU: {item.get('sku','')}</span>
               </div>
             </div>""", unsafe_allow_html=True)
         with c2:
             if item.get("listing_url"):
                 st.markdown(f"[🔗 View on eBay]({item['listing_url']})")
         with c3:
-            edit_sku = str(item.get("sku") or "")
-            can_edit = bool(edit_sku) and edit_sku.isalnum() and len(edit_sku) <= 50 and data.get("source") == "inventory_offers"
-            btn_key = "store_edit_" + str(item.get("listing_id") or item.get("offer_id") or edit_sku)
-            if st.button("✏️ Edit this listing", key=btn_key, use_container_width=True, disabled=not can_edit):
-                _open_editor_from_ebay(edit_sku)
+            if st.button("✏️ Edit this listing", key=f"store_edit_{item['sku']}", use_container_width=True):
+                _open_editor_from_ebay(item["sku"])
                 st.rerun()
-            if not can_edit:
-                st.caption("Live view only")
 
     st.markdown("---")
     _pagination(data["page"], data["total_pages"], "store", "store_page")
@@ -1147,10 +1178,10 @@ def render_products() -> None:
     st.markdown(CSS, unsafe_allow_html=True)
 
     try:
-        drafts_count = _list_drafts_safe(page=1, page_size=1)["total"]
+        drafts_count = list_drafts(page=1, page_size=1)["total"]
     except Exception as e:
         st.error(
-            f"⚠️ Could not load saved drafts: {e}\n\n"
+            f"⚠️ Could not load drafts from the database: {e}\n\n"
             "This usually means `core/draft_store.py` in this deployment is an older "
             "version, or the `product_drafts` table doesn't exist yet in Supabase. "
             "Drafts will not work correctly until this is fixed."

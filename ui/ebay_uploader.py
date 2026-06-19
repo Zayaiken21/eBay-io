@@ -47,44 +47,18 @@ def _guess_category_id(category: str) -> str:
     return CATEGORY_MAP["other"]
 
 def _sanitize_sku(title: str, draft_id: str) -> str:
-    """eBay in this account rejects punctuation, so force A-Z/0-9 only, max 50."""
-    raw = f"{title or 'ITEM'}{draft_id or ''}"
-    safe = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
-    return (safe or "ITEM")[:50]
-
-
-
-def _strip_html(text: str) -> str:
-    text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", str(text or ""))
-    text = re.sub(r"(?s)<[^>]+>", " ", text)
-    text = re.sub(r"&nbsp;", " ", text)
-    text = re.sub(r"&amp;", "&", text)
-    text = re.sub(r"&lt;", "<", text)
-    text = re.sub(r"&gt;", ">", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _safe_inventory_description(product: dict) -> str:
-    """Inventory API product.description must be plain-ish text, 1-4000 chars."""
-    parts = [
-        product.get("description", ""),
-        " ".join(product.get("features") or []),
-        product.get("title", ""),
-    ]
-    text = _strip_html("\n".join(str(p) for p in parts if p))
-    if not text:
-        text = f"Quality product: {product.get('title', 'Item')}"
-    return text[:3990]
-
-
-def _safe_listing_description(product: dict) -> str:
-    """Offer listingDescription can be richer, but keep it safe and below eBay limits."""
-    text = product.get("ebay_html") or product.get("description") or product.get("title") or "Quality item."
-    text = str(text).strip()
-    if len(text) > 490000:
-        text = text[:490000]
-    return text or "Quality item."
-
+    """
+    eBay error 25707 confirms SKUs must be STRICTLY alphanumeric — no hyphens,
+    underscores, or any other punctuation, max 50 characters. Despite some
+    eBay docs implying hyphens are fine, the live API rejects them, so we
+    strip everything except letters and digits.
+    """
+    title_part = re.sub(r"[^a-zA-Z0-9]", "", (title or "item"))[:30]
+    draft_part = re.sub(r"[^a-zA-Z0-9]", "", str(draft_id or "001"))
+    sku = f"{title_part}{draft_part}"
+    if not sku:
+        sku = f"item{draft_part}" or "item001"
+    return sku[:50]
 
 def _map_condition(condition: str) -> str:
     return {
@@ -171,215 +145,13 @@ def get_account_info() -> dict | None:
     return account
 
 
-
-
-def _safe_location_key(value: str = "") -> str:
-    """merchantLocationKey must be stable and <=50 chars. Keep it simple."""
-    cleaned = re.sub(r"[^A-Za-z0-9]", "", str(value or "").upper())
-    return (cleaned or "MAINWAREHOUSE")[:50]
-
-
-def _extract_address_from_identity(profile: dict | None) -> dict:
-    """Return best address eBay Identity exposes for this user, if available."""
-    profile = profile or {}
-    # Business accounts commonly expose businessAccount.address. Individual accounts may expose registrationAddress only when scope/approval allows it.
-    candidates = [
-        ((profile.get("businessAccount") or {}).get("address") or {}),
-        ((profile.get("individualAccount") or {}).get("registrationAddress") or {}),
-        (profile.get("registrationAddress") or {}),
-        (profile.get("address") or {}),
-    ]
-    for src in candidates:
-        if not isinstance(src, dict):
-            continue
-        out = {
-            "addressLine1": src.get("addressLine1") or src.get("address_line_1") or src.get("street1") or "",
-            "addressLine2": src.get("addressLine2") or src.get("address_line_2") or src.get("street2") or "",
-            "city": src.get("city") or "",
-            "stateOrProvince": src.get("stateOrProvince") or src.get("state") or src.get("province") or "",
-            "postalCode": src.get("postalCode") or src.get("postal_code") or src.get("zip") or "",
-            "country": src.get("country") or src.get("countryCode") or "US",
-        }
-        # eBay warehouse locations accept postalCode+country OR city+state+country.
-        if (out["postalCode"] and out["country"]) or (out["city"] and out["stateOrProvince"] and out["country"]):
-            return {k: v for k, v in out.items() if v}
-    return {}
-
-
-def _fetch_identity_address(api_base: str, access_token: str) -> dict:
-    try:
-        r = requests.get(
-            f"{api_base}/commerce/identity/v1/user/",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
-            timeout=20,
-        )
-        if r.status_code < 400:
-            return _extract_address_from_identity(r.json())
-    except Exception:
-        pass
-    return {}
-
-
-def _normalize_location_row(row: dict) -> dict:
-    if not isinstance(row, dict):
-        return {}
-    key = row.get("merchantLocationKey") or row.get("merchant_location_key") or row.get("locationId") or row.get("id") or ""
-    name = row.get("name") or row.get("locationName") or key
-    status = row.get("merchantLocationStatus") or row.get("status") or ""
-    address = ((row.get("location") or {}).get("address") or row.get("address") or {})
-    label_bits = [str(name or key)]
-    city = address.get("city") if isinstance(address, dict) else ""
-    state = address.get("stateOrProvince") if isinstance(address, dict) else ""
-    postal = address.get("postalCode") if isinstance(address, dict) else ""
-    if city or state or postal:
-        label_bits.append(" ".join(x for x in [city, state, postal] if x))
-    label = " — ".join(x for x in label_bits if x)
-    return {"key": str(key), "name": str(name or key), "label": label, "status": str(status), "address": address if isinstance(address, dict) else {}}
-
-
-def _get_inventory_locations(api_base: str, access_token: str, marketplace: str = "EBAY_US") -> list[dict]:
-    hdrs = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept": "application/json",
-        "Accept-Language": "en-US",
-        "X-EBAY-C-MARKETPLACE-ID": marketplace,
-    }
-    locations = []
-    offset, limit = 0, 100
-    while True:
-        r = requests.get(
-            f"{api_base}/sell/inventory/v1/location",
-            headers=hdrs,
-            params={"limit": str(limit), "offset": str(offset)},
-            timeout=25,
-        )
-        if r.status_code >= 400:
-            break
-        data = r.json() or {}
-        rows = data.get("locations") or data.get("inventoryLocations") or data.get("location") or []
-        if isinstance(rows, dict):
-            rows = [rows]
-        for row in rows:
-            item = _normalize_location_row(row)
-            if item.get("key"):
-                locations.append(item)
-        total = int(data.get("total", offset + len(rows)) or 0)
-        offset += limit
-        if not rows or offset >= total:
-            break
-    return locations
-
-
-def _create_inventory_location(api_base: str, access_token: str, marketplace: str, address: dict, key: str = "MAINWAREHOUSE") -> tuple[str, str | None]:
-    """Create/enable a warehouse location and return (key, error)."""
-    key = _safe_location_key(key)
-    address = {k: v for k, v in (address or {}).items() if v}
-    country = address.get("country") or address.get("countryCode") or "US"
-    payload_address = {"country": country}
-    for src, dst in [
-        ("addressLine1", "addressLine1"), ("addressLine2", "addressLine2"),
-        ("city", "city"), ("stateOrProvince", "stateOrProvince"), ("postalCode", "postalCode"),
-    ]:
-        if address.get(src):
-            payload_address[dst] = address[src]
-
-    if not ((payload_address.get("postalCode") and payload_address.get("country")) or (payload_address.get("city") and payload_address.get("stateOrProvince") and payload_address.get("country"))):
-        return "", "Missing location address. eBay needs at least postal code + country, or city + state + country, to create an inventory warehouse."
-
-    hdrs = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Accept-Language": "en-US",
-        "Content-Language": "en-US",
-        "X-EBAY-C-MARKETPLACE-ID": marketplace,
-    }
-    payload = {
-        "name": address.get("name") or "Main Warehouse",
-        "location": {"address": payload_address},
-        "locationTypes": ["WAREHOUSE"],
-        "merchantLocationStatus": "ENABLED",
-    }
-    # eBay createInventoryLocation is a PUT to /sell/inventory/v1/location/{merchantLocationKey}.
-    r = requests.put(
-        f"{api_base}/sell/inventory/v1/location/{key}",
-        headers=hdrs,
-        json=payload,
-        timeout=30,
-    )
-    # Retry POST only for unusual legacy/proxy behavior.
-    if r.status_code in (405, 404):
-        r = requests.post(
-            f"{api_base}/sell/inventory/v1/location/{key}",
-            headers=hdrs,
-            json=payload,
-            timeout=30,
-        )
-    if r.status_code not in (200, 201, 204):
-        msg = _safe_text(r)
-        # If it already exists, try to enable and use it.
-        if "already" not in msg.lower() and "duplicate" not in msg.lower():
-            return "", f"Could not create eBay inventory location: {msg}"
-    try:
-        requests.post(f"{api_base}/sell/inventory/v1/location/{key}/enable", headers=hdrs, timeout=20)
-    except Exception:
-        pass
-    return key, None
-
-
-def _resolve_merchant_location_key(api_base: str, access_token: str, marketplace: str, product: dict) -> tuple[str, str | None]:
-    """Use a real enabled merchantLocationKey. Create one if seller has none."""
-    typed = str(product.get("merchant_location_key") or "").strip()
-    locations = _get_inventory_locations(api_base, access_token, marketplace)
-    if locations:
-        enabled = [x for x in locations if x.get("status", "").upper() in ("", "ENABLED")]
-        candidates = enabled or locations
-        # If user provided the actual key, use it. Do not match display name like 'New York' unless key matches.
-        for loc in candidates:
-            if typed and typed == loc.get("key"):
-                return loc["key"], None
-        return candidates[0]["key"], None
-
-    # No locations exist. Create one from product location fields, then Identity API address.
-    address = {
-        "addressLine1": product.get("location_address_line1") or product.get("addressLine1") or "",
-        "city": product.get("location_city") or product.get("city") or "",
-        "stateOrProvince": product.get("location_state") or product.get("stateOrProvince") or "",
-        "postalCode": product.get("location_postal_code") or product.get("postalCode") or "",
-        "country": product.get("location_country") or product.get("country") or "US",
-        "name": product.get("location_name") or "Main Warehouse",
-    }
-    if not (address.get("postalCode") or (address.get("city") and address.get("stateOrProvince"))):
-        auto_addr = _fetch_identity_address(api_base, access_token)
-        if auto_addr:
-            address.update({k: v for k, v in auto_addr.items() if v})
-
-    # Final automatic fallback: create a basic WAREHOUSE location.
-    # Warehouse locations only require postalCode+country OR city+state+country.
-    # This prevents offer creation from failing with "Location information not found"
-    # when the seller has no existing Inventory API locations.
-    if not (address.get("postalCode") or (address.get("city") and address.get("stateOrProvince"))):
-        address.update({
-            "name": address.get("name") or "Main Warehouse",
-            "city": "New York",
-            "stateOrProvince": "NY",
-            "postalCode": "10001",
-            "country": "US",
-        })
-
-    typed_clean = _safe_location_key(typed) if typed else ""
-    key_seed = product.get("location_key") or typed_clean or "MAINWAREHOUSE"
-    return _create_inventory_location(api_base, access_token, marketplace, address, key_seed)
-
-
 def get_seller_policies() -> dict:
     """
-    Fetches fulfillment / payment / return policies and real eBay inventory locations
-    for the connected signed-in user. If no inventory location exists, the uploader
-    can auto-create one from the seller address/location fields before publishing.
+    Fetches fulfillment / payment / return policies for the connected account.
+    Auto-refreshes token via ebay_account_store.
     """
     owner = _get_owner_name()
-    result = {"fulfillment": [], "payment": [], "return": [], "locations": [], "identity_address": {}, "error": None}
+    result = {"fulfillment": [], "payment": [], "return": [], "error": None}
     try:
         access_token, account = get_valid_ebay_access_token(owner)
         api_base     = account.get("api_base") or "https://api.ebay.com"
@@ -415,12 +187,10 @@ def get_seller_policies() -> dict:
                     ]
             except Exception:
                 pass
-
-        result["locations"] = _get_inventory_locations(api_base, access_token, marketplace)
-        result["identity_address"] = _fetch_identity_address(api_base, access_token)
     except Exception as e:
         result["error"] = str(e)
     return result
+
 
 def upload_to_ebay(product: dict) -> dict:
     """
@@ -458,24 +228,19 @@ def upload_to_ebay(product: dict) -> dict:
         "X-EBAY-C-MARKETPLACE-ID": marketplace,
     }
 
-    sku   = _sanitize_sku(product.get("sku") or product.get("title", ""), product.get("draft_id", "001"))
+    sku   = _sanitize_sku(product.get("title", ""), product.get("draft_id", "001"))
     price = product.get("price") or "9.99"
     try:    float(price)
     except: price = "9.99"
 
-    merchant_location_key, location_error = _resolve_merchant_location_key(api_base, access_token, marketplace, product)
-    if location_error:
-        return _err(location_error)
-
     # ── 2. Create / update inventory item ─────────────────────────────────
     images    = [u for u in (product.get("images") or []) if u.startswith("http")][:12]
-    inventory_desc = _safe_inventory_description(product)
-    listing_desc = _safe_listing_description(product)
+    desc_html = product.get("ebay_html") or product.get("description") or ""
 
     inventory_payload = {
         "product": {
             "title":       product.get("title", "")[:80],
-            "description": inventory_desc,
+            "description": desc_html,
             "imageUrls":   images,
             "aspects":     _build_aspects(product),
         },
@@ -488,7 +253,8 @@ def upload_to_ebay(product: dict) -> dict:
     }
     if product.get("brand"):
         inventory_payload["product"]["brand"] = product["brand"]
-    inventory_payload["product"]["mpn"] = sku
+    if product.get("sku"):
+        inventory_payload["product"]["mpn"] = product["sku"]
 
     inv_resp = requests.put(
         f"{api_base}/sell/inventory/v1/inventory_item/{sku}",
@@ -506,7 +272,7 @@ def upload_to_ebay(product: dict) -> dict:
         "format":              "FIXED_PRICE",
         "availableQuantity":   max(1, int(product.get("quantity", 1))),
         "categoryId":          _guess_category_id(product.get("category", "")),
-        "listingDescription":  listing_desc,
+        "listingDescription":  desc_html,
         "pricingSummary": {
             "price": {"value": price, "currency": "USD"}
         },
@@ -515,7 +281,7 @@ def upload_to_ebay(product: dict) -> dict:
             "paymentPolicyId":     product.get("payment_policy_id", ""),
             "returnPolicyId":      product.get("return_policy_id", ""),
         },
-        "merchantLocationKey": merchant_location_key,
+        "merchantLocationKey": product.get("merchant_location_key", "default"),
     }
 
     # Tax only if values present (sandbox rejects empty tax blocks)
@@ -538,30 +304,8 @@ def upload_to_ebay(product: dict) -> dict:
             headers=hdrs, json=offer_payload, timeout=30,
         )
         if off_resp.status_code not in (200, 201):
-            msg = _safe_text(off_resp)
-            if "Location information not found" in msg or "merchantLocationKey" in msg or "location" in msg.lower():
-                # Location may have been missing/disabled; force-create MAINWAREHOUSE and retry once.
-                retry_key, retry_err = _create_inventory_location(
-                    api_base, access_token, marketplace,
-                    {"name": "Main Warehouse", "city": "New York", "stateOrProvince": "NY", "postalCode": "10001", "country": "US"},
-                    "MAINWAREHOUSE",
-                )
-                if not retry_err and retry_key:
-                    offer_payload["merchantLocationKey"] = retry_key
-                    off_resp = requests.post(
-                        f"{api_base}/sell/inventory/v1/offer",
-                        headers=hdrs, json=offer_payload, timeout=30,
-                    )
-                    if off_resp.status_code in (200, 201):
-                        offer_id = off_resp.json().get("offerId", "")
-                    else:
-                        return _err(f"Offer creation failed ({off_resp.status_code}): {_safe_text(off_resp)}")
-                else:
-                    return _err(f"Offer creation failed ({off_resp.status_code}): {msg} | Auto-create location failed: {retry_err}")
-            else:
-                return _err(f"Offer creation failed ({off_resp.status_code}): {msg}")
-        else:
-            offer_id = off_resp.json().get("offerId", "")
+            return _err(f"Offer creation failed ({off_resp.status_code}): {_safe_text(off_resp)}")
+        offer_id = off_resp.json().get("offerId", "")
 
     if not offer_id:
         return _err("eBay did not return an offer ID. Check policy IDs and merchant location.")

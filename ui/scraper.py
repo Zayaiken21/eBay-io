@@ -39,6 +39,34 @@ def _headers():
 def get_domain(url: str) -> str:
     return urlparse(url).netloc.lower().replace("www.", "")
 
+
+# ── Bot-wall / CAPTCHA detection ──────────────────────────────────────────
+# Plain HTTP requests can't run JavaScript or pass interactive challenges
+# ("press and hold" buttons, image grids, etc). When a major retailer's
+# anti-bot system intercepts the request, it returns a *real* HTTP 200 page
+# that just happens to be a challenge page instead of product content. If we
+# don't detect this, the parser will confidently extract garbage like
+# "Robot or human?" as the product title. This check stops that.
+_BOT_WALL_SIGNALS = [
+    "robot or human", "press and hold", "verify you are human", "are you a robot",
+    "captcha", "/distil_r_captcha", "perimeterx", "_px-captcha", "px-captcha",
+    "akamai bot manager", "datadome", "cf-challenge", "challenge-platform",
+    "checking your browser", "just a moment...", "enable javascript and cookies",
+    "unusual traffic from your computer", "automated access", "bot detection",
+    "human verification", "please verify you are a human", "ddos protection by",
+]
+
+def _looks_like_bot_wall(html: str, resp_status: int) -> bool:
+    if not html:
+        return False
+    lowered = html.lower()
+    hits = sum(1 for sig in _BOT_WALL_SIGNALS if sig in lowered)
+    # A real product page is large; bot-wall pages are typically tiny and
+    # almost entirely chrome/script with no real product markup.
+    is_suspiciously_small = len(html) < 15000
+    has_no_product_signals = ("og:title" not in lowered and "application/ld+json" not in lowered)
+    return hits >= 1 and (is_suspiciously_small or has_no_product_signals)
+
 # ── Site-specific selectors ────────────────────────────────────────────────
 SITE_RULES = {
     "amazon": {
@@ -185,6 +213,14 @@ def fetch_product_page(url: str, timeout: int = 25, max_retries: int = 4) -> dic
 
             resp.raise_for_status()
             html = resp.text
+
+            if _looks_like_bot_wall(html, resp.status_code):
+                if attempt < max_retries:
+                    last_error = "bot-check page detected — retrying with a different identity"
+                    continue
+                else:
+                    return _bot_wall_result(domain)
+
             break
 
         except requests.exceptions.HTTPError as e:
@@ -601,6 +637,28 @@ def _fill_defaults(p: dict):
         if k not in p: p[k] = v
 
 def _err(msg): return {"success": False, "product": None, "note": None, "error": msg}
+
+def _bot_wall_result(domain: str) -> dict:
+    """
+    Returned when the site served a bot-check/CAPTCHA page instead of real
+    product content. Distinct from a generic fetch error so the UI can show
+    a clear, specific message and route the seller straight to manual entry
+    instead of confusing them with garbage extracted "product data."
+    """
+    return {
+        "success": False,
+        "product": None,
+        "note": None,
+        "bot_wall": True,
+        "error": (
+            f"{domain} blocked this request with a bot-check page (e.g. a "
+            f"\"press and hold to verify you're human\" challenge). This site "
+            f"uses anti-automation protection that a plain page fetch cannot "
+            f"pass — no amount of retrying will get through it. "
+            f"Please use Manual Entry below to paste in the product details yourself."
+        ),
+    }
+
 def _lxml():
     try: import lxml; return True
     except ImportError: return False
