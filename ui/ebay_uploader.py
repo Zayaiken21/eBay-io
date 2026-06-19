@@ -10,9 +10,9 @@ Auth flow:
 
 import re
 import json
-import hashlib
 import requests
 import streamlit as st
+from urllib.parse import quote
 
 from core.ebay_account_store import (
     get_valid_ebay_access_token,
@@ -48,25 +48,11 @@ def _guess_category_id(category: str) -> str:
     return CATEGORY_MAP["other"]
 
 def _sanitize_sku(title: str, draft_id: str) -> str:
-    """
-    Final eBay-safe SKU generator.
-    This account's eBay API rejects ALL punctuation, so SKU must be:
-    A-Z / 0-9 only, 1-50 chars.
-    """
+    """eBay in this account rejects punctuation, so force A-Z/0-9 only, max 50."""
     raw = f"{title or 'ITEM'}{draft_id or ''}"
-    cleaned = re.sub(r"[^A-Za-z0-9]", "", str(raw)).upper()
+    safe = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
+    return (safe or "ITEM")[:50]
 
-    # Add a short alphanumeric hash so duplicate product titles do not reuse the same SKU.
-    digest = hashlib.sha1(str(raw).encode("utf-8", errors="ignore")).hexdigest()[:8].upper()
-    base = cleaned[:38] if cleaned else "ITEM"
-    sku = f"{base}{digest}"
-
-    sku = re.sub(r"[^A-Za-z0-9]", "", sku).upper()[:50]
-    return sku or "ITEM001"
-
-
-def _is_valid_sku(sku: str) -> bool:
-    return bool(sku) and len(str(sku)) <= 50 and re.fullmatch(r"[A-Za-z0-9]+", str(sku)) is not None
 
 
 def _strip_html(text: str) -> str:
@@ -186,13 +172,119 @@ def get_account_info() -> dict | None:
     return account
 
 
+def _safe_location_key(value: str) -> str:
+    """eBay location keys are usually merchant-defined. Keep only safe chars for API paths."""
+    value = str(value or "").strip()
+    return value[:50]
+
+
+def _extract_location_key(row: dict) -> str:
+    if not isinstance(row, dict):
+        return ""
+    return str(
+        row.get("merchantLocationKey")
+        or row.get("merchantLocationKeyName")
+        or row.get("locationKey")
+        or row.get("name")
+        or ""
+    ).strip()
+
+
+def _fetch_seller_locations(api_base: str, access_token: str, marketplace: str) -> list[dict]:
+    """Fetch real Inventory API locations for this signed-in eBay account."""
+    hdrs = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Accept-Language": "en-US",
+        "X-EBAY-C-MARKETPLACE-ID": marketplace,
+    }
+    locations: list[dict] = []
+    offset = 0
+    limit = 100
+
+    while True:
+        try:
+            r = requests.get(
+                f"{api_base}/sell/inventory/v1/location",
+                headers=hdrs,
+                params={"limit": str(limit), "offset": str(offset)},
+                timeout=20,
+            )
+        except Exception:
+            break
+
+        if r.status_code >= 400:
+            break
+
+        try:
+            data = r.json()
+        except Exception:
+            break
+
+        rows = (
+            data.get("locations")
+            or data.get("inventoryLocations")
+            or data.get("merchantLocations")
+            or data.get("location")
+            or []
+        )
+        if isinstance(rows, dict):
+            rows = [rows]
+        if not isinstance(rows, list):
+            rows = []
+
+        for row in rows:
+            key = _extract_location_key(row)
+            if not key:
+                continue
+            status = str(row.get("locationStatus") or row.get("status") or "").upper()
+            locations.append({
+                "id": key,
+                "name": key,
+                "status": status,
+                "raw": row,
+            })
+
+        total = int(data.get("total", offset + len(rows)) or 0)
+        offset += limit
+        if offset >= total or not rows:
+            break
+
+    # Prefer enabled/active locations, but keep everything as fallback.
+    locations.sort(key=lambda x: 0 if x.get("status") in ("ENABLED", "ACTIVE", "") else 1)
+    return locations
+
+
+def _resolve_location_key(product: dict, api_base: str, access_token: str, marketplace: str) -> tuple[str, list[dict], str]:
+    locations = _fetch_seller_locations(api_base, access_token, marketplace)
+    valid_keys = {loc["id"] for loc in locations if loc.get("id")}
+    requested = _safe_location_key(product.get("merchant_location_key"))
+
+    if requested and requested in valid_keys:
+        return requested, locations, ""
+
+    if requested and requested.lower() != "default" and not valid_keys:
+        # No list was returned, so let eBay validate the user-provided key.
+        return requested, locations, ""
+
+    if locations:
+        return locations[0]["id"], locations, ""
+
+    return "", locations, (
+        "No eBay inventory location was found for this account. "
+        "Open eBay Seller Hub → Inventory/Selling locations and create/enable a location, "
+        "then click 'Load my eBay policies' again."
+    )
+
+
 def get_seller_policies() -> dict:
     """
-    Fetches fulfillment / payment / return policies for the connected account.
-    Auto-refreshes token via ebay_account_store.
+    Fetches fulfillment / payment / return policies and real Inventory locations
+    for the connected signed-in user. Auto-refreshes token via ebay_account_store.
     """
     owner = _get_owner_name()
-    result = {"fulfillment": [], "payment": [], "return": [], "error": None}
+    result = {"fulfillment": [], "payment": [], "return": [], "locations": [], "error": None}
     try:
         access_token, account = get_valid_ebay_access_token(owner)
         api_base     = account.get("api_base") or "https://api.ebay.com"
@@ -228,6 +320,8 @@ def get_seller_policies() -> dict:
                     ]
             except Exception:
                 pass
+
+        result["locations"] = _fetch_seller_locations(api_base, access_token, marketplace)
     except Exception as e:
         result["error"] = str(e)
     return result
@@ -270,8 +364,6 @@ def upload_to_ebay(product: dict) -> dict:
     }
 
     sku   = _sanitize_sku(product.get("sku") or product.get("title", ""), product.get("draft_id", "001"))
-    if not _is_valid_sku(sku):
-        return _err(f"Generated invalid SKU before eBay call: {sku!r}")
     price = product.get("price") or "9.99"
     try:    float(price)
     except: price = "9.99"
@@ -306,9 +398,13 @@ def upload_to_ebay(product: dict) -> dict:
         timeout=30,
     )
     if inv_resp.status_code not in (200, 201, 204):
-        return _err(f"Inventory item failed ({inv_resp.status_code}) for SKU {sku}: {_safe_text(inv_resp)}")
+        return _err(f"Inventory item failed ({inv_resp.status_code}): {_safe_text(inv_resp)}")
 
     # ── 3. Create or update offer ─────────────────────────────────────────
+    location_key, locations, location_error = _resolve_location_key(product, api_base, access_token, marketplace)
+    if location_error:
+        return _err(location_error)
+
     offer_payload = {
         "sku":                 sku,
         "marketplaceId":       marketplace,
@@ -324,7 +420,7 @@ def upload_to_ebay(product: dict) -> dict:
             "paymentPolicyId":     product.get("payment_policy_id", ""),
             "returnPolicyId":      product.get("return_policy_id", ""),
         },
-        "merchantLocationKey": product.get("merchant_location_key", "default"),
+        "merchantLocationKey": location_key,
     }
 
     # Tax only if values present (sandbox rejects empty tax blocks)
@@ -339,7 +435,10 @@ def upload_to_ebay(product: dict) -> dict:
             headers=hdrs, json=offer_payload, timeout=30,
         )
         if off_resp.status_code not in (200, 204):
-            return _err(f"Offer update failed ({off_resp.status_code}): {_safe_text(off_resp)}")
+            msg = _safe_text(off_resp)
+            if "Location information not found" in msg or "25002" in msg:
+                msg += f" | Tried merchantLocationKey={location_key!r}. Click 'Load my eBay policies' and select a real location from this eBay account."
+            return _err(f"Offer update failed ({off_resp.status_code}): {msg}")
         offer_id = existing_offer_id
     else:
         off_resp = requests.post(
@@ -347,7 +446,10 @@ def upload_to_ebay(product: dict) -> dict:
             headers=hdrs, json=offer_payload, timeout=30,
         )
         if off_resp.status_code not in (200, 201):
-            return _err(f"Offer creation failed ({off_resp.status_code}): {_safe_text(off_resp)}")
+            msg = _safe_text(off_resp)
+            if "Location information not found" in msg or "25002" in msg:
+                msg += f" | Tried merchantLocationKey={location_key!r}. Click 'Load my eBay policies' and select a real location from this eBay account."
+            return _err(f"Offer creation failed ({off_resp.status_code}): {msg}")
         offer_id = off_resp.json().get("offerId", "")
 
     if not offer_id:

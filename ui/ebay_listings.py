@@ -9,6 +9,7 @@ pull any of them back into the draft editor to make changes.
 import re
 import requests
 import streamlit as st
+from urllib.parse import quote
 
 from core.ebay_account_store import get_valid_ebay_access_token
 
@@ -122,72 +123,61 @@ def fetch_my_listings(page: int = 1, page_size: int = 25) -> dict:
     }
 
 
-def _fetch_inventory_items(api_base: str, hdrs: dict, env: str, page: int = 1, page_size: int = 25) -> dict:
-    """
-    Fallback for accounts where /offer returns eBay SKU validation error because
-    legacy inventory contains punctuation-based SKUs. This endpoint lists inventory
-    items without passing a SKU value back to eBay.
-    """
-    offset = (max(1, int(page or 1)) - 1) * max(1, int(page_size or 25))
-    limit = max(1, int(page_size or 25))
 
+def _fetch_inventory_items(api_base: str, hdrs: dict, env: str, page: int, page_size: int) -> dict:
+    """Fallback listing reader that uses Inventory Items directly when Offers fails."""
+    offset = (max(1, int(page or 1)) - 1) * max(1, int(page_size or 25))
     try:
         resp = requests.get(
             f"{api_base}/sell/inventory/v1/inventory_item",
             headers=hdrs,
-            params={"limit": str(limit), "offset": str(offset)},
+            params={"limit": str(page_size), "offset": str(offset)},
             timeout=30,
         )
     except Exception as e:
-        return _err(f"Could not reach eBay inventory items: {e}")
+        return _err(f"Could not reach eBay inventory: {e}")
 
     if resp.status_code >= 400:
         return _err(_safe_text(resp))
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except Exception:
+        return _err("eBay returned an unreadable inventory response.")
+
     rows = data.get("inventoryItems", []) or []
     total = int(data.get("total", offset + len(rows)) or 0)
-
     items = []
     for row in rows:
-        sku = row.get("sku", "")
+        sku = str(row.get("sku", "") or "")
         inv = row.get("inventoryItem", {}) or {}
-        product = inv.get("product", {}) or {}
-        availability = inv.get("availability", {}) or {}
-        qty = (availability.get("shipToLocationAvailability", {}) or {}).get("quantity", 0)
-
+        prod = inv.get("product", {}) or {}
+        qty = (inv.get("availability", {}) or {}).get("shipToLocationAvailability", {}).get("quantity", 0)
+        title = _safe_title(prod.get("title") or _title_from_sku(sku))
         items.append({
             "sku": sku,
             "offer_id": "",
             "listing_id": "",
-            "title": _safe_title(product.get("title") or _title_from_sku(sku)),
+            "title": title,
             "price": "",
             "currency": "USD",
             "quantity": qty,
             "status": "INVENTORY",
             "category_id": "",
             "listing_url": "",
-            "sku_valid": _valid_ebay_sku(sku),
+            "image_url": (prod.get("imageUrls") or [""])[0] if isinstance(prod.get("imageUrls"), list) else "",
         })
 
-    total_pages = max(1, (total + limit - 1) // limit)
+    total_pages = max(1, (total + page_size - 1) // page_size)
     return {
-        "success": True,
-        "items": items,
-        "total": total,
-        "page": page,
-        "page_size": limit,
-        "total_pages": total_pages,
-        "environment": env,
-        "error": None,
-        "warning": "Loaded inventory items because eBay rejected the offer list due to an existing invalid SKU.",
+        "success": True, "items": items, "total": total,
+        "page": page, "page_size": page_size, "total_pages": total_pages,
+        "environment": env, "error": None,
+        "source": "inventory_items",
     }
-
 
 def fetch_inventory_item(sku: str) -> dict:
     sku = str(sku or "").strip()
-    if not _valid_ebay_sku(sku):
-        return {"success": False, "product": None, "error": "This existing eBay SKU contains characters this app/account cannot fetch safely. Create a new cleaned listing instead."}
     """
     Fetches full inventory item detail (images, description, aspects) for a
     single SKU — used when a seller clicks "Edit" on a live listing so we can
@@ -210,7 +200,7 @@ def fetch_inventory_item(sku: str) -> dict:
     }
 
     try:
-        resp = requests.get(f"{api_base}/sell/inventory/v1/inventory_item/{sku}", headers=hdrs, timeout=30)
+        resp = requests.get(f"{api_base}/sell/inventory/v1/inventory_item/{quote(sku, safe='')}", headers=hdrs, timeout=30)
     except Exception as e:
         return {"success": False, "product": None, "error": f"Could not reach eBay: {e}"}
 

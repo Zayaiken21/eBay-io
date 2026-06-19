@@ -483,7 +483,7 @@ def _tab_drafts():
         result = _list_drafts_safe(page=page, page_size=PAGE_SIZE)
     except Exception as e:
         st.error(f"⚠️ Could not load drafts: {e}")
-        st.caption("Check that `core/draft_store.py` is the latest version and the `product_drafts` table exists in Supabase.")
+        st.caption("Check that `core/draft_store.py` is installed and the local drafts file is writable.")
         return
     drafts = result["items"]
 
@@ -904,8 +904,8 @@ def _upload_panel(p: dict, exp: dict):
     try:
         info = get_account_info()
     except Exception as e:
-        st.error(f"❌ Could not read eBay account from Supabase: {e}")
-        st.caption(f"Resolved owner_name: `{owner}` · Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in secrets.")
+        st.error(f"❌ Could not read the connected eBay account: {e}")
+        st.caption(f"Resolved owner_name: `{owner}` · Reconnect eBay in Settings if this keeps happening.")
         return
 
     if not info:
@@ -981,12 +981,23 @@ def _upload_panel(p: dict, exp: dict):
             p["return_policy_id"] = st.text_input("Return Policy ID",
                 value=p.get("return_policy_id",""), key="pol_r_txt")
 
-    p["merchant_location_key"] = st.text_input(
-        "Merchant Location Key",
-        value=p.get("merchant_location_key","default"),
-        key="loc_key",
-        help="Set up in eBay Seller Hub → Locations. Usually 'default' for single-location sellers."
-    )
+    locs = policies.get("locations", [])
+    if locs:
+        loc_names = [x.get("name") or x.get("id") for x in locs if x.get("id")]
+        current_loc = p.get("merchant_location_key") or (locs[0].get("id") if locs else "")
+        loc_ids = [x.get("id") for x in locs if x.get("id")]
+        loc_index = loc_ids.index(current_loc) if current_loc in loc_ids else 0
+        selected_loc = st.selectbox("Inventory Location", loc_names, index=loc_index, key="loc_select")
+        p["merchant_location_key"] = next(x["id"] for x in locs if (x.get("name") or x.get("id")) == selected_loc)
+        st.caption(f"Using eBay location key: `{p['merchant_location_key']}`")
+    else:
+        p["merchant_location_key"] = st.text_input(
+            "Inventory Location Key",
+            value=p.get("merchant_location_key", ""),
+            key="loc_key",
+            help="Click 'Load my eBay policies' to pull the real location from this signed-in eBay account."
+        )
+        st.caption("Do not use `default` unless that exact location key exists in this eBay account.")
 
     p["ebay_html"] = exp.get("description_html", "")
     st.session_state.edit_product = p
@@ -994,10 +1005,10 @@ def _upload_panel(p: dict, exp: dict):
     st.markdown("---")
 
     missing_policies = not all([
-        p.get("fulfillment_policy_id"), p.get("payment_policy_id"), p.get("return_policy_id"),
+        p.get("fulfillment_policy_id"), p.get("payment_policy_id"), p.get("return_policy_id"), p.get("merchant_location_key"),
     ])
     if missing_policies:
-        st.warning("⚠️ Load your eBay policies above and select fulfillment, payment, and return policies before publishing.")
+        st.warning("⚠️ Load your eBay policies and select fulfillment, payment, return, and inventory location before publishing.")
 
     if st.button("🚀 Publish to eBay", type="primary",
                  use_container_width=True, disabled=missing_policies):
@@ -1031,7 +1042,7 @@ def _upload_panel(p: dict, exp: dict):
             with st.expander("Troubleshooting"):
                 st.markdown("""
 - **Policy IDs**: Must be valid policies from your own eBay account, matching the environment (sandbox policies won't work in production and vice versa)
-- **Merchant Location**: Must match a location key set up in eBay Seller Hub → Locations
+- **Inventory Location**: Click **Load my eBay policies** and select the real location key from this signed-in eBay account
 - **Token**: If you reconnected eBay recently and still see auth errors, disconnect and reconnect in Settings
 - **Content-Language**: Handled automatically (en-US) — no action needed
                 """)
@@ -1044,7 +1055,7 @@ STORE_PAGE_SIZE = 25
 def _tab_store():
     st.markdown("<div style='font-size:16px;font-weight:800;margin-bottom:4px;'>"
                 "🏬 My eBay Store</div>", unsafe_allow_html=True)
-    st.caption("Live listings pulled directly from your connected eBay account — not from our database.")
+    st.caption("Active listings pulled directly from this signed-in user’s connected eBay account.")
 
     try:
         info = get_account_info()
@@ -1123,7 +1134,7 @@ def render_products() -> None:
         st.error(
             f"⚠️ Could not load drafts from the database: {e}\n\n"
             "This usually means `core/draft_store.py` in this deployment is an older "
-            "version, or the `product_drafts` table doesn't exist yet in Supabase. "
+            "version, or the local drafts store is not writable. "
             "Drafts will not work correctly until this is fixed."
         )
         drafts_count = 0
