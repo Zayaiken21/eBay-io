@@ -417,27 +417,43 @@ def _rules_for(domain: str) -> dict:
 
 # ── Main entry point ───────────────────────────────────────────────────────
 
-def fetch_product_page(url: str, timeout: int = 25, max_retries: int = 4) -> dict:
+# Domains known to run enterprise-grade bot management (PerimeterX, Akamai
+# Bot Manager, etc.) where a different User-Agent on retry has essentially
+# zero chance of getting through — these systems fingerprint TLS/HTTP2
+# behavior, not just headers. Retrying 4 times against these just makes the
+# person wait ~30+ seconds to be told what we could tell them in 2 seconds.
+# These still get exactly ONE real attempt (sites do occasionally change
+# their protection), just no slow multi-retry dance.
+_HARD_BOT_WALL_DOMAINS = [
+    "walmart.com", "amazon.com", "target.com", "bestbuy.com",
+]
+
+
+def fetch_product_page(url: str, timeout: int = 15, max_retries: int = 4) -> dict:
     """
     Fetches and parses a product page. Designed to work across any e-commerce
     site, not just the ones with dedicated SITE_RULES — unknown domains fall
     through to generic JSON-LD / Open Graph / heuristic extraction.
 
-    Retries with exponential backoff + a fresh User-Agent and Referer on each
-    attempt, since many sites only block a fraction of requests (rate-limit
-    style) rather than every request outright. max_retries is generous but
-    not infinite — an unreachable site still needs to fail eventually rather
-    than hang forever.
+    Fails fast (1 attempt, ~2-4 seconds) for domains known to run enterprise
+    bot management where retrying with a new User-Agent has no realistic
+    chance of success. Otherwise retries with exponential backoff, capped
+    much lower than before so a failing import reports back in seconds, not
+    over a minute, while still giving soft rate-limits a real chance to clear.
     """
     domain = get_domain(url)
+    is_hard_wall_domain = any(d in domain for d in _HARD_BOT_WALL_DOMAINS)
+    effective_retries = 1 if is_hard_wall_domain else max_retries
     last_error = None
 
-    for attempt in range(1, max_retries + 1):
-        # Backoff before retries (not before the first attempt)
+    for attempt in range(1, effective_retries + 1):
+        # Backoff before retries (not before the first attempt). Capped at
+        # 3s instead of 8s — a person waiting on an import should see a
+        # result within a few seconds, not nearly a minute on worst case.
         if attempt > 1:
-            time.sleep(min(2 ** attempt, 8) + random.uniform(0, 1))
+            time.sleep(min(1.5 * attempt, 3) + random.uniform(0, 0.5))
         else:
-            time.sleep(random.uniform(0.3, 0.9))
+            time.sleep(random.uniform(0.15, 0.4))
 
         try:
             s = requests.Session()
@@ -451,17 +467,21 @@ def fetch_product_page(url: str, timeout: int = 25, max_retries: int = 4) -> dic
 
             # Retry on transient/blocking status codes; fail fast on permanent ones.
             if resp.status_code in (429, 503, 502, 504):
-                last_error = f"HTTP {resp.status_code} (temporary) on attempt {attempt}/{max_retries}"
+                last_error = f"HTTP {resp.status_code} (temporary) on attempt {attempt}/{effective_retries}"
                 continue
-            if resp.status_code == 403 and attempt < max_retries:
-                last_error = f"HTTP 403 on attempt {attempt}/{max_retries} — retrying with new identity"
+            if resp.status_code == 403 and attempt < effective_retries:
+                last_error = f"HTTP 403 on attempt {attempt}/{effective_retries} — retrying with new identity"
                 continue
+            if resp.status_code == 403 and is_hard_wall_domain:
+                # Known hard-wall domain, single attempt already failed —
+                # don't bother parsing, go straight to the bot-wall result.
+                return _bot_wall_result(domain)
 
             resp.raise_for_status()
             html = resp.text
 
             if _looks_like_bot_wall(html, resp.status_code):
-                if attempt < max_retries:
+                if attempt < effective_retries:
                     last_error = "bot-check page detected — retrying with a different identity"
                     continue
                 else:
@@ -476,28 +496,30 @@ def fetch_product_page(url: str, timeout: int = 25, max_retries: int = 4) -> dic
             # always reporting code=0 regardless of the actual response.
             # Must check "is not None" explicitly, never truthiness.
             code = e.response.status_code if e.response is not None else 0
-            if attempt >= max_retries:
+            if attempt >= effective_retries:
+                if code == 403 and is_hard_wall_domain:
+                    return _bot_wall_result(domain)
                 msg = {
                     403: "Access denied (403) after multiple attempts. This site actively blocks automated requests — paste the product details manually instead.",
                     404: "Page not found (404). Check the URL is correct.",
-                }.get(code, f"HTTP {code}: could not fetch page after {max_retries} attempts.")
+                }.get(code, f"HTTP {code}: could not fetch page after {effective_retries} attempt(s).")
                 return _err(msg)
             last_error = str(e)
             continue
         except requests.exceptions.Timeout:
-            if attempt >= max_retries:
-                return _err(f"Request timed out after {max_retries} attempts. The site may be very slow or blocking automated traffic.")
+            if attempt >= effective_retries:
+                return _err(f"Request timed out after {effective_retries} attempt(s). The site may be very slow or blocking automated traffic.")
             last_error = "timeout"
             continue
         except requests.exceptions.ConnectionError as e:
-            if attempt >= max_retries:
-                return _err(f"Could not connect to {domain} after {max_retries} attempts: {e}")
+            if attempt >= effective_retries:
+                return _err(f"Could not connect to {domain} after {effective_retries} attempt(s): {e}")
             last_error = str(e)
             continue
         except Exception as e:
             return _err(str(e))
     else:
-        return _err(f"Failed after {max_retries} attempts. Last error: {last_error}")
+        return _err(f"Failed after {effective_retries} attempt(s). Last error: {last_error}")
 
     if not BS4:
         return _err("BeautifulSoup not installed. Run: pip install beautifulsoup4 lxml")

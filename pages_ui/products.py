@@ -344,6 +344,14 @@ def _tab_import():
     url = st.text_input("URL", placeholder="https://www.amazon.com/dp/... or any product page URL",
                         label_visibility="collapsed", key="import_url_field")
 
+    if url.strip():
+        domain_preview = _domain_from_url(url.strip())
+        if any(d in domain_preview for d in ["walmart.com", "amazon.com", "target.com", "bestbuy.com"]):
+            st.caption(
+                f"⚠️ {domain_preview} runs strong anti-bot protection and usually blocks automated "
+                f"fetching. We'll try once quickly, then offer Manual Entry right away if it's blocked."
+            )
+
     go = st.button("⬇️ Import & Auto-Optimize", type="primary", use_container_width=False)
 
     if go and url.strip():
@@ -365,19 +373,31 @@ def _run_import(url: str):
     UNLESS the source site blocks the request with a bot-check page, in which
     case we route straight to a polished manual entry form instead of
     confusingly extracting garbage from the challenge page.
+
+    Uses a spinner instead of a percentage progress bar: the previous bar
+    jumped to 15% then froze there for the entire network call (which is
+    where ~95% of the real wait time happens), making the import feel stuck
+    even when it was actively working. A spinner with honest status text
+    doesn't pretend to measure progress it can't actually observe.
     """
-    bar = st.progress(0, text="Starting...")
-    bar.progress(15, "📡 Connecting to store...")
-    result = fetch_product_page(url)
-    bar.progress(70, "🔍 Parsing product data...")
+    domain = _domain_from_url(url)
+    is_known_hard_wall = any(d in domain for d in ["walmart.com", "amazon.com", "target.com", "bestbuy.com"])
+
+    status_text = (
+        f"Trying {domain} once — this site usually blocks automated fetching..."
+        if is_known_hard_wall else
+        f"Fetching and parsing {domain}..."
+    )
+
+    with st.spinner(status_text):
+        result = fetch_product_page(url)
 
     if not result["success"]:
-        bar.empty()
         if result.get("bot_wall"):
             st.error(f"🛑 {result['error']}")
             st.session_state.bot_wall_blocked = True
             st.session_state.bot_wall_url     = url
-            st.session_state.bot_wall_domain  = _domain_from_url(url)
+            st.session_state.bot_wall_domain  = domain
         else:
             st.error(f"❌ {result['error']}")
         return
@@ -389,12 +409,10 @@ def _run_import(url: str):
 
     product = result["product"]
 
-    bar.progress(90, "✨ Auto-optimizing title, description & tags...")
-    product = auto_seo_optimize(product)
-    product["seo_auto_applied"] = True
+    with st.spinner("Auto-optimizing title, description & tags..."):
+        product = auto_seo_optimize(product)
+        product["seo_auto_applied"] = True
 
-    bar.progress(100, "✅ Done!")
-    bar.empty()
     st.session_state.import_result = product
 
 
