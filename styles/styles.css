@@ -1,21 +1,65 @@
+/* ==========================================================================
+   styles.css — Ebay io global shell
+   Loaded once in app.py via ui.styles.load_css().
+   Defines the shared token system every page stylesheet consumes.
+   ========================================================================== */
+
 :root {
+  /* Brand */
   --royal-blue: #2457ff;
+  --royal-deep: #1237c5;
   --lime-green: #92ff18;
   --yellow-green: #d7ff3f;
 
+  /* Surfaces */
   --bg-main: #dfe7f3;
   --bg-deep: #b9c8dc;
   --bg-card: rgba(255, 255, 255, 0.88);
+  --bg-sunken: rgba(248, 250, 252, 0.92);
 
-  --border: rgba(15, 23, 42, 0.12);
+  /* Ink */
   --text: #0f172a;
   --muted: #475569;
+  --muted-2: #64748b;
+
+  /* Lines */
+  --border: rgba(15, 23, 42, 0.12);
+  --border-soft: rgba(148, 163, 184, 0.22);
+
+  /* Status */
+  --ok: #276749;
+  --ok-bg: #f0fff4;
+  --ok-line: #9ae6b4;
+  --warn: #92400e;
+  --warn-bg: #fff8f0;
+  --warn-line: #fbd38d;
+  --danger: #9b2c2c;
+  --danger-bg: #fee2e2;
+
+  /* Rhythm — one scale, used by every page */
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 20px;
+  --r-xl: 26px;
+  --gap: 14px;
+  --shadow-sm: 0 6px 18px rgba(15, 23, 42, 0.07);
+  --shadow-md: 0 14px 34px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 16px 42px rgba(15, 23, 42, 0.13);
+
+  /* Minimum comfortable tap target */
+  --tap: 44px;
 
   --font-main: Inter, ui-sans-serif, system-ui, -apple-system,
     BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
 
-/* Hide Streamlit UI */
+/* --------------------------------------------------------------------------
+   Streamlit chrome
+   NOTE: collapsedControl is deliberately NOT hidden. Orders puts its filters
+   in the sidebar, and hiding this control made them unreachable on every
+   device once initial_sidebar_state="collapsed" was set.
+   -------------------------------------------------------------------------- */
 #MainMenu,
 footer,
 header,
@@ -24,7 +68,6 @@ header,
 [data-testid="stDecoration"],
 [data-testid="stStatusWidget"],
 [data-testid="stDeployButton"],
-[data-testid="collapsedControl"],
 .stDeployButton,
 div[class*="viewerBadge"],
 div[class*="ViewerBadge"],
@@ -35,7 +78,16 @@ a[href*="streamlit.io"] {
   width: 0 !important;
 }
 
-/* Global */
+[data-testid="collapsedControl"] {
+  z-index: 10000 !important;
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-radius: 999px !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Global
+   -------------------------------------------------------------------------- */
 html,
 body,
 .stApp,
@@ -45,6 +97,8 @@ body,
   max-width: 100vw !important;
   overflow-x: hidden !important;
   font-family: var(--font-main) !important;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 .stApp {
@@ -52,34 +106,103 @@ body,
     radial-gradient(circle at 8% 0%, rgba(36, 87, 255, 0.30), transparent 32%),
     radial-gradient(circle at 92% 0%, rgba(146, 255, 24, 0.30), transparent 34%),
     linear-gradient(180deg, #eef3fa 0%, var(--bg-main) 45%, var(--bg-deep) 100%);
+  background-attachment: fixed;
   color: var(--text);
 }
 
 .block-container {
   padding-top: 1rem;
-  padding-bottom: 2rem;
+  padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px));
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
   max-width: 1240px;
 }
 
-/* Top Brand */
+/* Nothing overflows its container, ever. */
+img,
+video,
+canvas,
+iframe {
+  max-width: 100%;
+}
+
+/* Long SKUs, URLs and eBay IDs must wrap instead of widening the page. */
+code,
+.wrap-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-family: var(--font-mono);
+}
+
+/* Wide tables scroll inside their own box rather than the whole page. */
+[data-testid="stDataFrame"],
+[data-testid="stTable"],
+.table-wrap {
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch;
+  border-radius: var(--r-md);
+}
+
+/* --------------------------------------------------------------------------
+   Controls — sized for thumbs, not cursors
+   -------------------------------------------------------------------------- */
+.stButton > button,
+.stDownloadButton > button,
+.stLinkButton > a {
+  border-radius: var(--r-sm) !important;
+  font-weight: 700 !important;
+  min-height: var(--tap) !important;
+}
+
+input,
+textarea,
+select {
+  border-radius: var(--r-sm) !important;
+}
+
+/* 16px prevents iOS Safari from zooming the viewport on focus. */
+.stTextInput input,
+.stTextArea textarea,
+.stNumberInput input,
+.stDateInput input,
+[data-baseweb="select"] {
+  font-size: 16px !important;
+}
+
+:where(button, a, input, textarea, select):focus-visible {
+  outline: 3px solid var(--royal-blue) !important;
+  outline-offset: 2px !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Top bar
+   -------------------------------------------------------------------------- */
 .top-nav {
   position: sticky;
   top: 0;
   z-index: 9999;
   padding: 15px 18px;
   margin-bottom: 12px;
-  border-radius: 24px;
+  border-radius: var(--r-xl);
   background:
-    linear-gradient(
-      135deg,
+    linear-gradient(135deg,
       rgba(36, 87, 255, 0.24),
       rgba(146, 255, 24, 0.38),
-      rgba(215, 255, 63, 0.30)
-    ),
+      rgba(215, 255, 63, 0.30)),
     rgba(255, 255, 255, 0.52);
   border: 1px solid rgba(255, 255, 255, 0.55);
   backdrop-filter: blur(18px);
-  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.13);
+  box-shadow: var(--shadow-lg);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -87,7 +210,7 @@ body,
 
 .top-nav-brand {
   text-align: center;
-  font-size: 26px;
+  font-size: clamp(19px, 4vw, 26px);
   font-weight: 900;
   letter-spacing: -0.4px;
   line-height: 1;
@@ -95,7 +218,8 @@ body,
   text-shadow: 0 1px 10px rgba(146, 255, 24, 0.5);
 }
 
-/* Menu Grid */
+/* Nav grid. Eight items across a phone forced 9.6px type that nobody could
+   read; below 760px it becomes two rows of four and keeps legible sizing. */
 .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
   display: grid !important;
   grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
@@ -112,53 +236,45 @@ body,
   padding-right: 0 !important;
 }
 
-/* Menu Buttons */
 .st-key-top_menu_area div[data-testid="stButton"] button {
   width: 100% !important;
   border-radius: 999px !important;
-  min-height: 40px !important;
-  height: 40px !important;
-
+  min-height: var(--tap) !important;
+  height: var(--tap) !important;
+  padding: 0 6px !important;
   font-size: 12px !important;
   font-weight: 800 !important;
   letter-spacing: -0.1px !important;
-
   border: 1px solid rgba(36, 87, 255, 0.18) !important;
   background:
-    linear-gradient(
-      135deg,
+    linear-gradient(135deg,
       rgba(255, 255, 255, 0.96),
       rgba(234, 247, 255, 0.92),
-      rgba(242, 255, 221, 0.88)
-    ) !important;
-
-  color: #1237c5 !important;
+      rgba(242, 255, 221, 0.88)) !important;
+  color: var(--royal-deep) !important;
   white-space: nowrap !important;
   overflow: hidden !important;
-  text-overflow: clip !important;
+  text-overflow: ellipsis !important;
   box-shadow: 0 7px 18px rgba(15, 23, 42, 0.08) !important;
 }
 
 .st-key-top_menu_area div[data-testid="stButton"] button p {
   white-space: nowrap !important;
   overflow: hidden !important;
-  text-overflow: clip !important;
+  text-overflow: ellipsis !important;
   max-width: 100% !important;
-  color: #1237c5 !important;
+  color: var(--royal-deep) !important;
 }
 
-/* Active Button */
 .st-key-top_menu_area button[kind="primary"],
 .st-key-top_menu_area [data-testid="stBaseButton-primary"],
 .st-key-top_menu_area div[data-testid="stButton"] button[kind="primary"] {
   background:
-    linear-gradient(
-      135deg,
+    linear-gradient(135deg,
       var(--royal-blue),
       var(--lime-green),
-      var(--yellow-green)
-    ) !important;
-  color: white !important;
+      var(--yellow-green)) !important;
+  color: #fff !important;
   border: none !important;
   box-shadow: 0 10px 24px rgba(36, 87, 255, 0.26) !important;
 }
@@ -166,50 +282,55 @@ body,
 .st-key-top_menu_area button[kind="primary"] p,
 .st-key-top_menu_area [data-testid="stBaseButton-primary"] p,
 .st-key-top_menu_area div[data-testid="stButton"] button[kind="primary"] p {
-  color: white !important;
+  color: #fff !important;
 }
 
-/* Hero */
+/* --------------------------------------------------------------------------
+   Page hero (Settings, Analytics, AiBlogger, Login)
+   -------------------------------------------------------------------------- */
 .app-hero {
-  padding: 32px;
-  border-radius: 26px;
+  padding: clamp(20px, 4vw, 32px);
+  border-radius: var(--r-xl);
   background:
-    linear-gradient(
-      135deg,
+    linear-gradient(135deg,
       rgba(36, 87, 255, 0.16),
-      rgba(146, 255, 24, 0.22)
-    ),
+      rgba(146, 255, 24, 0.22)),
     rgba(255, 255, 255, 0.72);
   border: 1px solid var(--border);
   margin-bottom: 24px;
-  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-md);
 }
 
 .app-hero h1 {
   margin: 0;
-  font-size: 42px;
+  font-size: clamp(24px, 6vw, 42px);
   font-weight: 900;
   letter-spacing: -1px;
+  line-height: 1.05;
 }
 
 .app-hero p {
   color: var(--muted);
-  font-size: 16px;
+  font-size: clamp(13px, 2.4vw, 16px);
+  line-height: 1.5;
+  margin: 8px 0 0;
 }
 
-/* Dashboard */
+/* --------------------------------------------------------------------------
+   Metric cards + Streamlit st.metric
+   -------------------------------------------------------------------------- */
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--gap);
 }
 
 .metric-card {
   padding: 18px;
-  border-radius: 20px;
+  border-radius: var(--r-lg);
   background: var(--bg-card);
   border: 1px solid var(--border);
-  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-md);
 }
 
 .metric-card h3 {
@@ -222,131 +343,126 @@ body,
 .metric-card strong {
   display: block;
   margin-top: 8px;
-  font-size: 26px;
+  font-size: clamp(22px, 5vw, 26px);
   font-weight: 900;
 }
 
-input,
-textarea,
-select {
-  border-radius: 12px !important;
+div[data-testid="stMetric"] {
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-sm);
 }
 
-/* Tablet */
+div[data-testid="stMetricValue"] {
+  font-size: clamp(19px, 4.5vw, 26px) !important;
+}
+
+div[data-testid="stMetricLabel"] {
+  font-size: 12px !important;
+  color: var(--muted) !important;
+}
+
+/* Tabs wrap instead of clipping their last item on narrow screens. */
+.stTabs [data-baseweb="tab-list"] {
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+}
+
+.stTabs [data-baseweb="tab"] {
+  border-radius: 999px !important;
+  padding: 8px 14px !important;
+  background: rgba(255, 255, 255, 0.6) !important;
+}
+
+/* ==========================================================================
+   RESPONSIVE
+   Streamlit columns are flex children that never wrap on their own, which is
+   why dense rows (draft actions, publish policies, order filters) crushed
+   down to unusable slivers. Below 900px they wrap; below 640px they stack.
+   ========================================================================== */
+
 @media screen and (max-width: 900px) {
-  .dashboard-grid {
-    grid-template-columns: repeat(2, 1fr);
+  .block-container {
+    max-width: 100vw !important;
+  }
+
+  [data-testid="stHorizontalBlock"]:not(.st-key-top_menu_area *) {
+    flex-wrap: wrap !important;
+  }
+
+  [data-testid="stHorizontalBlock"]:not(.st-key-top_menu_area *) > [data-testid="stColumn"] {
+    flex: 1 1 220px !important;
+    min-width: 0 !important;
   }
 }
 
-/* Mobile */
-@media screen and (max-width: 700px) {
+@media screen and (max-width: 760px) {
   .block-container {
-    padding-left: 0.28rem !important;
-    padding-right: 0.28rem !important;
+    padding-left: max(0.6rem, env(safe-area-inset-left, 0px)) !important;
+    padding-right: max(0.6rem, env(safe-area-inset-right, 0px)) !important;
     padding-top: 0.55rem !important;
-    max-width: 100vw !important;
   }
 
   .top-nav {
     padding: 12px 13px !important;
     margin-bottom: 10px !important;
-    border-radius: 18px !important;
+    border-radius: var(--r-lg) !important;
   }
 
-  .top-nav-brand {
-    width: 100%;
-    text-align: center !important;
-    font-size: 19px !important;
-    font-weight: 900 !important;
-  }
-
+  /* Two readable rows beat one unreadable one. */
   .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
-    grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
-    gap: 1px !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 6px !important;
   }
 
-  .st-key-top_menu_area div[data-testid="stButton"] button {
-    height: 41px !important;
-    min-height: 41px !important;
-
-    font-size: 10.6px !important;
-    font-weight: 850 !important;
-    letter-spacing: -0.62px !important;
-
-    padding: 0 1px !important;
-    line-height: 1 !important;
-    border-radius: 999px !important;
-    text-align: center !important;
-  }
-
+  .st-key-top_menu_area div[data-testid="stButton"] button,
   .st-key-top_menu_area div[data-testid="stButton"] button p {
-    font-size: 10.6px !important;
-    font-weight: 850 !important;
-    letter-spacing: -0.62px !important;
-    line-height: 1 !important;
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    max-width: 100% !important;
+    font-size: 12px !important;
+    letter-spacing: -0.2px !important;
+    line-height: 1.1 !important;
   }
 
   .app-hero {
-    padding: 22px !important;
-    border-radius: 22px !important;
-    margin-bottom: 18px !important;
-  }
-
-  .app-hero h1 {
-    font-size: 26px !important;
-    letter-spacing: -0.75px !important;
-  }
-
-  .app-hero p {
-    font-size: 13px !important;
-    line-height: 1.45 !important;
-  }
-
-  .dashboard-grid {
-    grid-template-columns: repeat(2, 1fr) !important;
-    gap: 14px !important;
-  }
-
-  .metric-card {
-    padding: 18px 14px !important;
-    min-height: 120px !important;
-  }
-
-  .metric-card h3 {
-    font-size: 12px !important;
-  }
-
-  .metric-card strong {
-    font-size: 25px !important;
+    margin-bottom: 16px !important;
   }
 }
 
-/* Small iPhones */
-@media screen and (max-width: 430px) {
-  .st-key-top_menu_area div[data-testid="stButton"] button,
-  .st-key-top_menu_area div[data-testid="stButton"] button p {
-    font-size: 10.1px !important;
-    letter-spacing: -0.68px !important;
+@media screen and (max-width: 640px) {
+  /* Full stack: every column gets the whole width. */
+  [data-testid="stHorizontalBlock"]:not(.st-key-top_menu_area *) > [data-testid="stColumn"] {
+    flex: 1 1 100% !important;
+    width: 100% !important;
   }
 
-  .top-nav-brand {
-    font-size: 18px !important;
+  /* Exception: rows explicitly marked as icon actions stay inline —
+     three tiny icon buttons stacked vertically is worse, not better. */
+  .icon-row [data-testid="stColumn"] {
+    flex: 1 1 auto !important;
+    width: auto !important;
   }
 
-  .app-hero h1 {
-    font-size: 24px !important;
+  div[data-testid="stMetric"] {
+    padding: 10px 12px;
   }
 }
 
-/* Very Small Phones */
-@media screen and (max-width: 390px) {
+@media screen and (max-width: 400px) {
+  .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
   .st-key-top_menu_area div[data-testid="stButton"] button,
   .st-key-top_menu_area div[data-testid="stButton"] button p {
-    font-size: 9.6px !important;
-    letter-spacing: -0.72px !important;
+    font-size: 11.5px !important;
+  }
+}
+
+/* Landscape phones: reclaim vertical space from the sticky bar. */
+@media screen and (max-height: 480px) and (orientation: landscape) {
+  .top-nav {
+    position: static;
+    padding: 9px 12px !important;
   }
 }
