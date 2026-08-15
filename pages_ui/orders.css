@@ -1,0 +1,118 @@
+/* ==========================================================================
+   orders.css — Orders board
+   Loaded by orders.py via load_css("orders.css").
+   Replaces the inline _css() block, whose classes were scoped to .orders-page,
+   a class the page never actually applied to anything.
+   ========================================================================== */
+
+.orders-hero {
+  background:
+    radial-gradient(circle at top left, rgba(146, 255, 24, 0.18), transparent 34%),
+    linear-gradient(135deg, var(--royal-blue) 0%, #1230a8 100%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--r-xl);
+  padding: clamp(16px, 4vw, 22px) clamp(16px, 4vw, 26px);
+  margin-bottom: var(--gap);
+  box-shadow: 0 14px 40px rgba(36, 87, 255, 0.20);
+}
+
+.orders-hero h1 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(22px, 5.5vw, 34px);
+  letter-spacing: -0.04em;
+  line-height: 1.08;
+}
+
+.orders-hero p {
+  margin: 8px 0 0;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: clamp(12.5px, 2.6vw, 14px);
+  line-height: 1.5;
+  max-width: 70ch;
+}
+
+.hero-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.soft-card,
+.panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  padding: 1rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.small-muted,
+.subtle {
+  color: var(--muted-2);
+  font-size: 0.9rem;
+}
+
+.mini-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 800;
+  background: rgba(36, 87, 255, 0.10);
+  color: var(--royal-deep);
+  border: 1px solid rgba(36, 87, 255, 0.20);
+}
+
+.detail-label {
+  color: var(--muted-2);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.detail-line {
+  padding: 0.28rem 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.section-title {
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 18px 0 8px;
+}
+
+/* Filters live in the sidebar. On phones the sidebar overlays the page, so
+   give it breathing room and full-width controls. */
+[data-testid="stSidebar"] .stButton > button,
+[data-testid="stSidebar"] [data-baseweb="select"],
+[data-testid="stSidebar"] .stDateInput {
+  width: 100% !important;
+}
+
+/* The orders table is 11 columns wide — it scrolls horizontally inside its
+   own frame instead of stretching the page. */
+[data-testid="stDataFrame"] {
+  border: 1px solid var(--border-soft);
+}
+
+@media screen and (max-width: 760px) {
+  [data-testid="stDataFrame"] {
+    min-height: 340px;
+  }
+
+  .orders-hero {
+    border-radius: var(--r-lg);
+  }
+}
