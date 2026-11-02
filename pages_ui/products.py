@@ -245,7 +245,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r19 · 2026-11-02"
+APP_BUILD = "r20 · 2026-11-02"
 
 
 def _account_banner():
@@ -635,8 +635,10 @@ eBay formatting exactly like an automatic import.
     # The block stops a fetch, not the parser. If the seller opens the page
     # in their own browser (passing the challenge as a human) and copies the
     # source, the full extraction pipeline runs on it normally.
-    _capture_panel(src_url)
-
+    #
+    # _capture_panel is NOT called here: it already renders higher up in
+    # _tab_import on every import, and a second call created a second button
+    # with the same widget key, which Streamlit rejects outright.
     with st.expander("⚡ Faster: paste the page source and auto-extract", expanded=False):
         st.markdown(
             "<p style='color:#744210;font-size:13px;line-height:1.55;'>"
