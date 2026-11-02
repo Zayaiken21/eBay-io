@@ -787,3 +787,37 @@ hr { border-color: var(--border-soft) !important; }
   color: var(--muted-2) !important;
   margin-bottom: 2px !important;
 }
+
+/* --------------------------------------------------------------------------
+   Product tab row.
+   The global narrow-screen rule stacks columns, which is right for forms but
+   turned these five tabs into five full-width rows. Keep them on one line and
+   let the row scroll sideways instead.
+   -------------------------------------------------------------------------- */
+.st-key-prod_tab_row [data-testid="stHorizontalBlock"] {
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  gap: 6px !important;
+}
+
+.st-key-prod_tab_row [data-testid="stHorizontalBlock"]::-webkit-scrollbar {
+  display: none;
+}
+
+.st-key-prod_tab_row [data-testid="stColumn"] {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+}
+
+.st-key-prod_tab_row .stButton > button {
+  min-height: 34px !important;
+  height: 34px !important;
+  padding: 0 13px !important;
+  font-size: 12.5px !important;
+  font-weight: 700 !important;
+  white-space: nowrap !important;
+  border-radius: 999px !important;
+}

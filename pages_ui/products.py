@@ -52,8 +52,11 @@ flex-wrap: wrap; gap: 16px; box-shadow: 0 4px 24px rgba(0,83,160,0.18);
 .hstat-num     { font-size: 30px; font-weight: 900; line-height: 1; }
 .hstat-lbl     { font-size: 10px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; }
 
+/* Not flex: the banner is one sentence, and flex made each text run its own
+   item, breaking "Connected: <account> - Live - Listings post to this
+   account" into ragged columns. */
 .acct-banner {
-display: flex; align-items: center; gap: 10px;
+display: block; line-height: 1.5;
 background: #f0fff4; border: 1px solid #9ae6b4;
 border-radius: 9px; padding: 10px 16px;
 font-size: 13px; color: #276749; font-weight: 600; margin-bottom: 16px;
@@ -242,7 +245,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r17 · 2026-11-02"
+APP_BUILD = "r18 · 2026-11-02"
 
 
 def _account_banner():
@@ -272,11 +275,15 @@ def _account_banner():
 # ─── Tab navigation ───────────────────────────────────────────────────────────
 
 def _tabs(draft_count: int):
-    c1, c2, c3, c4, c5, _ = st.columns([2, 2.3, 2, 2, 2.3, 2])
+    # Keyed so the stylesheet can keep this row inline. The global rule that
+    # stacks columns on narrow screens is right for forms, but applied here it
+    # turned five tabs into five full-width rows filling the viewport.
+    row = st.container(key="prod_tab_row")
+    c1, c2, c3, c4, c5, _ = row.columns([2, 2.6, 2, 2, 2.4, 0.4])
     for col, key, label in zip(
         [c1, c2, c3, c4, c5],
         ["import", "drafts", "editor", "publish", "store"],
-        ["⬇️ Import", f"📝 Drafts ({draft_count})", "✏️ Editor", "🚀 Publish", "🏬 My Store"],
+        ["Import", f"Drafts ({draft_count})", "Editor", "Publish", "My Store"],
     ):
         with col:
             disabled = (key == "editor" and not st.session_state.edit_product)
