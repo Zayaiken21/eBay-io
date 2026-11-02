@@ -821,3 +821,64 @@ hr { border-color: var(--border-soft) !important; }
   white-space: nowrap !important;
   border-radius: 999px !important;
 }
+
+/* --------------------------------------------------------------------------
+   Code blocks.
+   The bookmarklet is one long unbroken line, so it ran off the right edge
+   and had to be scrolled sideways to read. Wrapping it keeps the whole
+   snippet on screen; Streamlit's copy button still copies the full text.
+   -------------------------------------------------------------------------- */
+[data-testid="stCode"] pre,
+[data-testid="stCode"] code,
+.stCode pre,
+.stCode code {
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-all !important;
+  font-size: 11.5px !important;
+  line-height: 1.5 !important;
+  max-height: 170px;
+  overflow-y: auto;
+}
+
+/* --------------------------------------------------------------------------
+   Hero text.
+   The bolt motif sits in the top-right, so the heading needs a reserved
+   gutter — otherwise a long title runs underneath the bolts. Heading and
+   body also needed real spacing between them rather than sitting flush.
+   -------------------------------------------------------------------------- */
+.app-hero {
+  padding-right: clamp(58px, 15vw, 96px) !important;
+}
+
+.app-hero h1 {
+  margin: 0 0 6px !important;
+  text-wrap: balance;
+}
+
+.app-hero p {
+  margin: 0 !important;
+  max-width: 46ch;
+}
+
+/* --------------------------------------------------------------------------
+   Login.
+   The form sat flush against the tabs with no breathing room, and its
+   fields stretched edge to edge on wide screens.
+   -------------------------------------------------------------------------- */
+[data-testid="stForm"] {
+  border-radius: var(--r-lg) !important;
+  border: 1px solid var(--border) !important;
+  background: #fff;
+  padding: 16px !important;
+  box-shadow: var(--shadow-sm);
+}
+
+.stTabs [data-baseweb="tab-panel"] {
+  padding-top: 12px;
+}
+
+/* Keep paragraph text from running to the very edge of a narrow screen. */
+[data-testid="stMarkdownContainer"] p {
+  overflow-wrap: break-word;
+}

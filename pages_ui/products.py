@@ -245,7 +245,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r21 · 2026-11-02"
+APP_BUILD = "r22 · 2026-11-02"
 
 
 def _account_banner():
