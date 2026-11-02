@@ -176,16 +176,36 @@ def _try_shopify_json_endpoint(url: str, session: requests.Session, headers: dic
     if "/products/" not in url:
         return None
     base = url.split("?")[0].rstrip("/")
-    json_url = base + ".json"
-    try:
-        resp = session.get(json_url, headers=headers, timeout=timeout)
-        if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
+
+    # Try .js before .json. Many stores disable the .json product endpoint
+    # (it 404s), but .js — the storefront AJAX API the theme itself calls —
+    # is almost always live. It returns the product object directly rather
+    # than wrapped in {"product": {...}}, and prices come back in cents.
+    for suffix in (".js", ".json"):
+        try:
+            resp = session.get(base + suffix, headers=headers, timeout=timeout)
+            if resp.status_code != 200:
+                continue
+            if "json" not in resp.headers.get("content-type", "").lower():
+                continue
             data = resp.json()
-            if isinstance(data, dict) and "product" in data:
-                return data["product"]
-    except Exception:
-        pass
+            if not isinstance(data, dict):
+                continue
+            product = data.get("product") if "product" in data else data
+            if isinstance(product, dict) and product.get("title"):
+                # Mark which endpoint answered: .js reports money in cents,
+                # .json reports it as a decimal string.
+                product["_price_in_cents"] = (suffix == ".js")
+                return product
+        except Exception:
+            continue
     return None
+
+
+def _shopify_variant_id(url: str):
+    """Returns the variant id pinned in the URL (?variant=...), if any."""
+    m = re.search(r'[?&]variant=(\d+)', url)
+    return m.group(1) if m else None
 
 
 # ── Bot-wall / CAPTCHA detection ──────────────────────────────────────────
@@ -571,9 +591,25 @@ def fetch_product_page(url: str, timeout: int = 15, max_retries: int = 4) -> dic
 def _product_from_shopify_json(sp: dict, url: str, domain: str) -> dict:
     """Builds our standard product dict directly from Shopify's clean .json endpoint response."""
     variants = sp.get("variants") or []
+    in_cents = bool(sp.get("_price_in_cents"))
+
+    # Honor the variant pinned in the URL. A "?variant=" link points at one
+    # specific size/pack, and listing variants[0]'s price would publish the
+    # wrong number to eBay.
+    wanted = _shopify_variant_id(url)
+    chosen = None
+    if wanted:
+        chosen = next((v for v in variants if str(v.get("id")) == wanted), None)
+    if chosen is None and variants:
+        chosen = variants[0]
+
     price = ""
-    if variants:
-        price = _clean_price(str(variants[0].get("price", "")))
+    if chosen is not None:
+        raw = chosen.get("price")
+        if raw not in (None, ""):
+            # .js gives integer cents (1299), .json gives "12.99".
+            price = (f"{int(raw) / 100:.2f}" if in_cents and isinstance(raw, (int, float))
+                     else _clean_price(str(raw)))
 
     images = []
     for img in (sp.get("images") or []):
@@ -601,8 +637,8 @@ def _product_from_shopify_json(sp: dict, url: str, domain: str) -> dict:
         "features": [],
         "specifications": specs,
         "images": images[:12],
-        "sku": (variants[0].get("sku", "") if variants else ""),
-        "weight": (f"{variants[0].get('grams', 0)/1000:.2f} kg" if variants and variants[0].get("grams") else ""),
+        "sku": (chosen.get("sku", "") if chosen else ""),
+        "weight": (f"{chosen.get('grams', 0)/1000:.2f} kg" if chosen and chosen.get("grams") else ""),
         "dimensions": "",
         "variants": variant_labels,
         "tags": _tags(sp.get("title", ""), [], sp.get("product_type", ""), sp.get("vendor", "")),
@@ -696,13 +732,38 @@ def _title(soup, html, rules):
             if len(t) > 5: return _clean_title(t)
     # 3. JSON-LD
     v = _jld(html, "name")
-    if v: return _clean_title(str(v))
+    if v and _plausible_title(_clean_title(str(v))):
+        return _clean_title(str(v))
     # 4. H1
     h1 = soup.find("h1")
-    if h1: return _clean_title(h1.get_text(strip=True))
+    if h1:
+        t = _clean_title(h1.get_text(strip=True))
+        if _plausible_title(t):
+            return t
     # 5. <title> tag
-    if soup.title: return _clean_title(soup.title.get_text(strip=True))
+    if soup.title:
+        t = _clean_title(soup.title.get_text(strip=True))
+        if _plausible_title(t):
+            return t
     return ""
+
+# Values that are never a product title. These show up as option labels,
+# condition flags and placeholder variant names in page markup, and one of
+# them ("New") was being imported as the title on Shopify pages.
+_TITLE_JUNK = {
+    "new", "used", "default title", "default", "product", "untitled",
+    "one size", "n/a", "none", "title", "item", "options", "select",
+    "refurbished", "open box", "pre-owned",
+}
+
+
+def _plausible_title(t: str) -> bool:
+    """A title must be substantive — not a condition word or placeholder."""
+    if not t:
+        return False
+    s = t.strip().lower()
+    return len(s) > 5 and s not in _TITLE_JUNK
+
 
 def _clean_title(t: str) -> str:
     # Strip store suffixes
@@ -976,25 +1037,73 @@ def _meta_name(soup, name):
     tag = soup.find("meta", attrs={"name": name})
     return tag["content"].strip() if tag and tag.get("content") else ""
 
-def _jld(html: str, field: str):
-    for m in re.finditer(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, re.DOTALL|re.IGNORECASE):
+def _jld_nodes(html: str):
+    """
+    Yields every JSON-LD node on the page, flattening lists and @graph
+    containers. The old version read only the first block and ignored
+    @graph entirely, so pages that nest Product inside @graph (most
+    Shopify and WooCommerce themes) looked like they had no JSON-LD.
+    """
+    for m in re.finditer(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html, re.DOTALL | re.IGNORECASE,
+    ):
         try:
             data = json.loads(m.group(1))
-            if isinstance(data, list): data = data[0]
-            if not isinstance(data, dict): continue
-            # Direct field
-            val = data.get(field)
-            if val: return val
-            # Nested in offers
-            offers = data.get("offers", {})
-            if isinstance(offers, list): offers = offers[0] if offers else {}
-            val = offers.get(field)
-            if val: return val
         except Exception:
-            pass
-    # Regex fallback
-    m = re.search(rf'"{re.escape(field)}"\s*:\s*"([^"]+)"', html)
-    return m.group(1) if m else None
+            continue
+        stack = [data]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, list):
+                stack.extend(node)
+            elif isinstance(node, dict):
+                yield node
+                if "@graph" in node:
+                    stack.append(node["@graph"])
+
+
+def _is_product_node(node: dict) -> bool:
+    t = node.get("@type")
+    types = [t] if isinstance(t, str) else (t if isinstance(t, list) else [])
+    return any(str(x).lower() in ("product", "productgroup") for x in types)
+
+
+def _jld(html: str, field: str):
+    """
+    Reads a field from the page's JSON-LD, preferring a real Product node.
+
+    The previous implementation ended with a regex fallback that scanned the
+    ENTIRE raw HTML for '"field": "value"'. On a Shopify page the first
+    '"name"' in source is typically a variant option or form field, which is
+    how a seed-pack page imported with the title "New". The fallback now
+    searches only inside ld+json script bodies.
+    """
+    product_nodes, other_nodes = [], []
+    for node in _jld_nodes(html):
+        (product_nodes if _is_product_node(node) else other_nodes).append(node)
+
+    for node in product_nodes + other_nodes:
+        val = node.get(field)
+        if val:
+            return val
+        offers = node.get("offers", {})
+        if isinstance(offers, list):
+            offers = offers[0] if offers else {}
+        if isinstance(offers, dict):
+            val = offers.get(field)
+            if val:
+                return val
+
+    # Scoped fallback: only within JSON-LD blocks, never the whole document.
+    for m in re.finditer(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html, re.DOTALL | re.IGNORECASE,
+    ):
+        hit = re.search(rf'"{re.escape(field)}"\s*:\s*"([^"]+)"', m.group(1))
+        if hit:
+            return hit.group(1)
+    return None
 
 def _clean_html(text: str) -> str:
     text = re.sub(r'<[^>]+>', ' ', text)

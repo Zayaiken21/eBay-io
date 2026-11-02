@@ -176,7 +176,7 @@ def rewrite_description(
     body = _body_para(desc_clean, hook)
     box_items = _guess_box_contents(title, features, specifications)
 
-    sections = [hook]
+    sections = [hook] if hook else []
 
     if feat_bullets:
         sections.append("✅ KEY BENEFITS\n" + "\n".join(feat_bullets))
@@ -304,20 +304,12 @@ def _build_hook(desc: str, title: str, brand: str, cat_key: str) -> str:
     if good:
         return " ".join(good[:2])
 
-    b = f" by {brand}" if brand else ""
-    benefit_lead = {
-        "electronics": "engineered for reliable everyday performance",
-        "clothing":    "made for all-day comfort without sacrificing style",
-        "home":        "built to make everyday tasks easier",
-        "toys":        "designed to keep kids engaged and learning",
-        "sports":      "built to keep up with your training",
-        "beauty":      "formulated for real, noticeable results",
-        "automotive":  "engineered for a precise, reliable fit",
-        "pet":         "made with your pet's comfort and safety in mind",
-        "tools":       "built for durability on every job",
-    }.get(cat_key, "built to deliver outstanding performance and reliability")
-
-    return f"Introducing the {title}{b} — {benefit_lead}."
+    # No usable source text. Previously this returned invented marketing copy
+    # ("Introducing the X — built to deliver outstanding performance and
+    # reliability"), which put claims about the product into the listing that
+    # nothing on the source page supported. An eBay listing is a representation
+    # to a buyer, so an empty hook is correct here; the seller fills it in.
+    return ""
 
 
 def _benefit_frame(feature: str) -> str:
