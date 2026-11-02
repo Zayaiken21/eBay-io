@@ -882,3 +882,24 @@ hr { border-color: var(--border-soft) !important; }
 [data-testid="stMarkdownContainer"] p {
   overflow-wrap: break-word;
 }
+
+/* --------------------------------------------------------------------------
+   Streamlit's in-field hint ("Press Enter to submit form") is absolutely
+   positioned inside the input. On a narrow screen it overlaps the typed
+   value and collides with the show-password eye. It is noise on touch,
+   where there is no Enter key in view.
+   -------------------------------------------------------------------------- */
+[data-testid="InputInstructions"],
+[data-testid="stWidgetInstructions"] {
+  display: none !important;
+}
+
+/* Tabs span the header evenly instead of being clipped by fixed ratios. */
+.st-key-prod_tab_row [data-testid="stHorizontalBlock"] {
+  justify-content: flex-start !important;
+}
+
+.st-key-prod_tab_row .stButton > button {
+  width: auto !important;
+  min-width: max-content !important;
+}

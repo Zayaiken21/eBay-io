@@ -245,7 +245,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r22 · 2026-11-02"
+APP_BUILD = "r23 · 2026-11-02"
 
 
 def _account_banner():
@@ -289,7 +289,7 @@ def _tabs(draft_count: int):
             disabled = (key == "editor" and not st.session_state.edit_product)
             ptype    = "primary" if st.session_state.prod_tab == key else "secondary"
             if st.button(label, key=f"ptab_{key}", type=ptype,
-                         use_container_width=True, disabled=disabled):
+                         use_container_width=False, disabled=disabled):
                 _set_tab(key); st.rerun()
     st.markdown("<hr style='margin:10px 0 22px;border-color:#e2e8f0;'>", unsafe_allow_html=True)
 
@@ -505,6 +505,35 @@ def _show_import_result(p: dict):
             st.session_state.import_result = None; st.rerun()
 
 
+@st.fragment(run_every=4)
+def _capture_poller(owner: str) -> None:
+    """
+    Re-checks for a waiting capture every few seconds.
+
+    Runs as a fragment so only this strip reruns on the timer — the rest of
+    the page, including anything typed into the import field, is untouched.
+    When a capture lands, the whole app reruns once so the panel redraws
+    with the button enabled.
+    """
+    try:
+        from core.import_inbox import pending_count
+    except Exception:
+        return
+
+    try:
+        waiting = pending_count(owner)
+    except Exception:
+        return
+
+    was = st.session_state.get("_capture_waiting", 0)
+    st.session_state["_capture_waiting"] = waiting
+
+    # Only a transition from none to some needs a full rerun; reruns on every
+    # tick would fight with whatever the seller is doing on the page.
+    if waiting and not was:
+        st.rerun(scope="app")
+
+
 def _capture_panel(src_url: str = "") -> None:
     """
     One-tap capture from the seller's own browser.
@@ -529,6 +558,11 @@ def _capture_panel(src_url: str = "") -> None:
             "in Streamlit secrets. Until then, use the paste box below."
         )
         return
+
+    # Poll on a timer. Without this the panel only checks for a capture when
+    # the page happens to rerun, so tapping the bookmark did nothing visible
+    # until the page was refreshed by hand.
+    _capture_poller(owner)
 
     waiting = pending_count(owner)
 
