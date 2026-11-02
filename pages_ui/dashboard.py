@@ -42,7 +42,7 @@ DEFAULT_NICHES = [
 
 
 def _load_css() -> None:
-    css_path = "pages_ui/dashboard.css"
+    css_path = "styles/dashboard.css"
     try:
         with open(css_path, "r", encoding="utf-8") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
@@ -314,36 +314,44 @@ def _product_card(product: Dict[str, Any], index: int) -> str:
     image = escape(product.get("image") or "")
     url = escape(product.get("url") or "#")
     seller = escape(product.get("seller") or "eBay seller")
-    condition = escape(product.get("condition") or "Not shown")
+    condition = escape(product.get("condition") or "")
     price = product.get("price") or 0
     sold_24h = product.get("sold_24h")
     sold_90d = product.get("sold_90d")
     success = product.get("success_rate")
 
-    success_text = f"{success}%" if success is not None else "Needs Insights access"
-    sold_text = f"{sold_24h} / {sold_90d}" if sold_90d else "Active comp"
+    # Render a stat tile only when real data backs it. Placeholder strings
+    # ("Not shown", "Needs Insights access") read as filler on the card.
+    tiles = []
+    if sold_90d:
+        tiles.append(
+            f"<div><b>{sold_24h} / {sold_90d}</b><small>24h / 90d sold</small></div>"
+        )
+    if success is not None:
+        tiles.append(f"<div><b>{success}%</b><small>success rate</small></div>")
+    stats_html = (
+        f'<div class="trend-stats">{"".join(tiles)}</div>' if tiles else ""
+    )
+    cond_html = f"<span>{condition}</span>" if condition else ""
 
     return f"""
-    <article class="trend-card">
-        <div class="rank-pill">#{index}</div>
-        <a href="{url}" target="_blank" rel="noopener noreferrer">
-            <img src="{image}" class="trend-img" alt="{title}">
-        </a>
-        <div class="trend-content">
-            <div class="trend-keyword">{keyword}</div>
-            <h3>{title}</h3>
-            <div class="trend-price">${price:,.2f}</div>
-            <div class="trend-meta">
-                <span>{condition}</span>
-                <span>{seller}</span>
-            </div>
-            <div class="trend-stats">
-                <div><b>{sold_text}</b><small>24h / 90d sold</small></div>
-                <div><b>{success_text}</b><small>success rate</small></div>
-            </div>
-        </div>
-    </article>
-    """
+<article class="trend-card">
+<div class="rank-pill">#{index}</div>
+<a href="{url}" target="_blank" rel="noopener noreferrer">
+<img src="{image}" class="trend-img" alt="{title}">
+</a>
+<div class="trend-content">
+<div class="trend-keyword">{keyword}</div>
+<h3>{title}</h3>
+<div class="trend-price">${price:,.2f}</div>
+<div class="trend-meta">
+{cond_html}
+<span>{seller}</span>
+</div>
+{stats_html}
+</div>
+</article>
+"""
 
 
 def _render_products(products: List[Dict[str, Any]]) -> None:
@@ -435,18 +443,18 @@ def render_dashboard() -> None:
 
     st.markdown(
         f"""
-        <section class="dash-hero">
-            <div>
-                <span class="eyebrow">Market Intelligence Dashboard</span>
-                <h1>Find eBay products moving right now.</h1>
-                <p>Research active marketplace products, niche demand signals, and sales-history availability in a compact SaaS workspace.</p>
-            </div>
-            <div class="hero-chip">
-                <small>Connected account</small>
-                <strong>{escape(_connected_label(owner_name))}</strong>
-            </div>
-        </section>
-        """,
+<section class="dash-hero">
+<div>
+<span class="eyebrow">Market Intelligence Dashboard</span>
+<h1>Find eBay products moving right now.</h1>
+<p>Research active marketplace products, niche demand signals, and sales-history availability in a compact SaaS workspace.</p>
+</div>
+<div class="hero-chip">
+<small>Connected account</small>
+<strong>{escape(_connected_label(owner_name))}</strong>
+</div>
+</section>
+""",
         unsafe_allow_html=True,
     )
 
@@ -491,11 +499,11 @@ def render_dashboard() -> None:
 
     st.markdown(
         f"""
-        <div class="freshness">
-            Daily research board resets at <b>12:00 AM EST</b>. Current board date: <b>{reset_key}</b>.
-            Last refreshed: <b>{escape(result.get("generated_at_est", ""))}</b>.
-        </div>
-        """,
+<div class="freshness">
+Daily research board resets at <b>12:00 AM EST</b>. Current board date: <b>{reset_key}</b>.
+Last refreshed: <b>{escape(result.get("generated_at_est", ""))}</b>.
+</div>
+""",
         unsafe_allow_html=True,
     )
 

@@ -1,21 +1,23 @@
 /* ==========================================================================
    styles.css — Ebay io global shell
    Loaded once in app.py via ui.styles.load_css().
-   Defines the shared token system every page stylesheet consumes.
+   Defines the token system every page stylesheet consumes.
    ========================================================================== */
 
 :root {
-  /* Brand */
+  /* Royal blue is the spine of the app. Every page blends from it. */
   --royal-blue: #2457ff;
   --royal-deep: #1237c5;
+  --royal-ink: #0b2a9e;
+  --royal-mist: #eaf0ff;
   --lime-green: #92ff18;
   --yellow-green: #d7ff3f;
 
   /* Surfaces */
   --bg-main: #dfe7f3;
   --bg-deep: #b9c8dc;
-  --bg-card: rgba(255, 255, 255, 0.88);
-  --bg-sunken: rgba(248, 250, 252, 0.92);
+  --bg-card: rgba(255, 255, 255, 0.90);
+  --bg-sunken: rgba(246, 249, 255, 0.94);
 
   /* Ink */
   --text: #0f172a;
@@ -24,7 +26,7 @@
 
   /* Lines */
   --border: rgba(15, 23, 42, 0.12);
-  --border-soft: rgba(148, 163, 184, 0.22);
+  --border-soft: rgba(36, 87, 255, 0.16);
 
   /* Status */
   --ok: #276749;
@@ -36,17 +38,20 @@
   --danger: #9b2c2c;
   --danger-bg: #fee2e2;
 
-  /* Rhythm — one scale, used by every page */
+  /* Rhythm */
   --r-sm: 12px;
   --r-md: 16px;
   --r-lg: 20px;
   --r-xl: 26px;
   --gap: 14px;
-  --shadow-sm: 0 6px 18px rgba(15, 23, 42, 0.07);
-  --shadow-md: 0 14px 34px rgba(15, 23, 42, 0.08);
+  --shadow-sm: 0 6px 18px rgba(36, 87, 255, 0.08);
+  --shadow-md: 0 14px 34px rgba(36, 87, 255, 0.10);
   --shadow-lg: 0 16px 42px rgba(15, 23, 42, 0.13);
 
-  /* Minimum comfortable tap target */
+  /* The royal blend every hero and panel reuses. */
+  --blend-royal: linear-gradient(135deg, var(--royal-blue) 0%, #1230a8 58%, var(--royal-ink) 100%);
+  --blend-royal-soft: linear-gradient(135deg, rgba(36, 87, 255, 0.14), rgba(36, 87, 255, 0.04));
+
   --tap: 44px;
 
   --font-main: Inter, ui-sans-serif, system-ui, -apple-system,
@@ -56,9 +61,8 @@
 
 /* --------------------------------------------------------------------------
    Streamlit chrome
-   NOTE: collapsedControl is deliberately NOT hidden. Orders puts its filters
-   in the sidebar, and hiding this control made them unreachable on every
-   device once initial_sidebar_state="collapsed" was set.
+   collapsedControl stays visible — Orders keeps its filters in the sidebar,
+   and hiding it made them unreachable on every device.
    -------------------------------------------------------------------------- */
 #MainMenu,
 footer,
@@ -80,7 +84,7 @@ a[href*="streamlit.io"] {
 
 [data-testid="collapsedControl"] {
   z-index: 10000 !important;
-  background: rgba(255, 255, 255, 0.9) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
   border-radius: 999px !important;
   box-shadow: var(--shadow-sm) !important;
 }
@@ -104,21 +108,20 @@ body,
 .stApp {
   background:
     radial-gradient(circle at 8% 0%, rgba(36, 87, 255, 0.30), transparent 32%),
-    radial-gradient(circle at 92% 0%, rgba(146, 255, 24, 0.30), transparent 34%),
+    radial-gradient(circle at 92% 0%, rgba(146, 255, 24, 0.28), transparent 34%),
     linear-gradient(180deg, #eef3fa 0%, var(--bg-main) 45%, var(--bg-deep) 100%);
   background-attachment: fixed;
   color: var(--text);
 }
 
 .block-container {
-  padding-top: 1rem;
+  padding-top: 0.9rem;
   padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px));
   padding-left: max(1rem, env(safe-area-inset-left, 0px));
   padding-right: max(1rem, env(safe-area-inset-right, 0px));
   max-width: 1240px;
 }
 
-/* Nothing overflows its container, ever. */
 img,
 video,
 canvas,
@@ -126,7 +129,7 @@ iframe {
   max-width: 100%;
 }
 
-/* Long SKUs, URLs and eBay IDs must wrap instead of widening the page. */
+/* Long SKUs, URLs and eBay IDs wrap instead of widening the page. */
 code,
 .wrap-anywhere {
   overflow-wrap: anywhere;
@@ -134,17 +137,73 @@ code,
   font-family: var(--font-mono);
 }
 
-/* Wide tables scroll inside their own box rather than the whole page. */
+/* Wide tables scroll inside their own frame, not the page. */
 [data-testid="stDataFrame"],
 [data-testid="stTable"],
 .table-wrap {
   overflow-x: auto !important;
   -webkit-overflow-scrolling: touch;
   border-radius: var(--r-md);
+  border: 1px solid var(--border-soft);
+}
+
+/* ==========================================================================
+   BOLT MOTIF — small, and used in four places only: the wordmark, the active
+   nav bubble, primary actions, and hero corners.
+   ========================================================================== */
+
+@keyframes bolt-charge {
+  0%, 88%, 100% { opacity: 0.55; transform: translateY(0) scale(1); }
+  92%           { opacity: 1;    transform: translateY(-1px) scale(1.12); }
+  96%           { opacity: 0.8;  transform: translateY(0) scale(1.02); }
+}
+
+@keyframes bolt-sweep {
+  0%   { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+
+.bolt,
+.bolt-sm {
+  display: inline-block;
+  width: 9px;
+  height: 15px;
+  background: linear-gradient(160deg, var(--yellow-green), var(--lime-green));
+  clip-path: polygon(56% 0%, 12% 56%, 44% 56%, 30% 100%, 88% 40%, 52% 40%);
+  vertical-align: -2px;
+  filter: drop-shadow(0 0 4px rgba(146, 255, 24, 0.7));
+  animation: bolt-charge 4.5s ease-in-out infinite;
+}
+
+.bolt-sm { width: 7px; height: 11px; vertical-align: -1px; }
+
+.bolt:nth-of-type(2) { animation-delay: 0.7s; }
+.bolt:nth-of-type(3) { animation-delay: 1.4s; }
+
+.stButton > button[kind="primary"] {
+  position: relative;
+  overflow: hidden !important;
+}
+
+.stButton > button[kind="primary"]::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 28%;
+  height: 100%;
+  background: linear-gradient(100deg, transparent, rgba(215, 255, 63, 0.5), transparent);
+  animation: bolt-sweep 3.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.stSpinner > div {
+  border-top-color: var(--lime-green) !important;
+  animation-duration: 0.7s !important;
 }
 
 /* --------------------------------------------------------------------------
-   Controls — sized for thumbs, not cursors
+   Controls
    -------------------------------------------------------------------------- */
 .stButton > button,
 .stDownloadButton > button,
@@ -152,6 +211,23 @@ code,
   border-radius: var(--r-sm) !important;
   font-weight: 700 !important;
   min-height: var(--tap) !important;
+  transition: transform 0.12s ease, box-shadow 0.16s ease !important;
+}
+
+.stButton > button:hover,
+.stDownloadButton > button:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.stButton > button:active { transform: translateY(0); }
+
+.stButton > button[kind="primary"],
+[data-testid="stBaseButton-primary"] {
+  background: var(--blend-royal) !important;
+  border: none !important;
+  color: #fff !important;
+  box-shadow: 0 8px 20px rgba(36, 87, 255, 0.26) !important;
 }
 
 input,
@@ -160,7 +236,7 @@ select {
   border-radius: var(--r-sm) !important;
 }
 
-/* 16px prevents iOS Safari from zooming the viewport on focus. */
+/* 16px stops iOS Safari zooming the viewport on focus. */
 .stTextInput input,
 .stTextArea textarea,
 .stNumberInput input,
@@ -169,24 +245,40 @@ select {
   font-size: 16px !important;
 }
 
+.stTextInput input:focus,
+.stTextArea textarea:focus {
+  border-color: var(--royal-blue) !important;
+  box-shadow: 0 0 0 3px rgba(36, 87, 255, 0.15) !important;
+}
+
 :where(button, a, input, textarea, select):focus-visible {
   outline: 3px solid var(--royal-blue) !important;
   outline-offset: 2px !important;
 }
 
+[data-testid="stAlert"] {
+  border-radius: var(--r-md) !important;
+  border-left-width: 4px !important;
+  box-shadow: var(--shadow-sm);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+  .bolt, .bolt-sm { opacity: 1; }
 }
 
-/* --------------------------------------------------------------------------
-   Top bar
-   -------------------------------------------------------------------------- */
+/* ==========================================================================
+   TOP BAR + BUBBLE MENU
+   The bubbles stay exactly as they are: a wrapping grid of rounded pills.
+   They reflow 8 -> 4 -> 3 across as the screen narrows, and never shrink
+   their type to stay on one line.
+   ========================================================================== */
+
 .top-nav {
   position: sticky;
   top: 0;
@@ -218,8 +310,8 @@ select {
   text-shadow: 0 1px 10px rgba(146, 255, 24, 0.5);
 }
 
-/* Nav grid. Eight items across a phone forced 9.6px type that nobody could
-   read; below 760px it becomes two rows of four and keeps legible sizing. */
+.top-nav-brand .bolt { margin-left: 6px; }
+
 .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
   display: grid !important;
   grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
@@ -241,21 +333,21 @@ select {
   border-radius: 999px !important;
   min-height: var(--tap) !important;
   height: var(--tap) !important;
-  padding: 0 6px !important;
-  font-size: 12px !important;
+  padding: 0 8px !important;
+  font-size: 13px !important;
   font-weight: 800 !important;
   letter-spacing: -0.1px !important;
-  border: 1px solid rgba(36, 87, 255, 0.18) !important;
+  border: 1px solid var(--border-soft) !important;
   background:
     linear-gradient(135deg,
       rgba(255, 255, 255, 0.96),
-      rgba(234, 247, 255, 0.92),
-      rgba(242, 255, 221, 0.88)) !important;
+      rgba(234, 243, 255, 0.94),
+      rgba(243, 252, 227, 0.90)) !important;
   color: var(--royal-deep) !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
-  box-shadow: 0 7px 18px rgba(15, 23, 42, 0.08) !important;
+  box-shadow: 0 7px 18px rgba(36, 87, 255, 0.10) !important;
 }
 
 .st-key-top_menu_area div[data-testid="stButton"] button p {
@@ -264,19 +356,22 @@ select {
   text-overflow: ellipsis !important;
   max-width: 100% !important;
   color: var(--royal-deep) !important;
+  font-size: inherit !important;
 }
 
 .st-key-top_menu_area button[kind="primary"],
 .st-key-top_menu_area [data-testid="stBaseButton-primary"],
 .st-key-top_menu_area div[data-testid="stButton"] button[kind="primary"] {
+  position: relative;
+  overflow: hidden !important;
   background:
     linear-gradient(135deg,
-      var(--royal-blue),
-      var(--lime-green),
-      var(--yellow-green)) !important;
+      var(--royal-blue) 0%,
+      #4aa6e8 42%,
+      var(--lime-green) 100%) !important;
   color: #fff !important;
   border: none !important;
-  box-shadow: 0 10px 24px rgba(36, 87, 255, 0.26) !important;
+  box-shadow: 0 10px 24px rgba(36, 87, 255, 0.30) !important;
 }
 
 .st-key-top_menu_area button[kind="primary"] p,
@@ -285,66 +380,111 @@ select {
   color: #fff !important;
 }
 
-/* --------------------------------------------------------------------------
-   Page hero (Settings, Analytics, AiBlogger, Login)
-   -------------------------------------------------------------------------- */
+/* ==========================================================================
+   SHARED HERO — every page opens on the same royal blend
+   ========================================================================== */
+
 .app-hero {
-  padding: clamp(20px, 4vw, 32px);
+  position: relative;
+  overflow: hidden;
+  padding: clamp(18px, 4vw, 30px);
   border-radius: var(--r-xl);
-  background:
-    linear-gradient(135deg,
-      rgba(36, 87, 255, 0.16),
-      rgba(146, 255, 24, 0.22)),
-    rgba(255, 255, 255, 0.72);
-  border: 1px solid var(--border);
-  margin-bottom: 24px;
-  box-shadow: var(--shadow-md);
+  background: var(--blend-royal);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  margin-bottom: 18px;
+  box-shadow: 0 16px 44px rgba(36, 87, 255, 0.22);
+  color: #fff;
+}
+
+.app-hero::after {
+  content: "";
+  position: absolute;
+  top: -12%;
+  right: -2%;
+  width: 92px;
+  height: 150px;
+  background: linear-gradient(160deg, var(--yellow-green), var(--lime-green));
+  clip-path: polygon(56% 0%, 12% 56%, 44% 56%, 30% 100%, 88% 40%, 52% 40%);
+  opacity: 0.18;
+  pointer-events: none;
+  animation: bolt-charge 6s ease-in-out infinite;
 }
 
 .app-hero h1 {
+  position: relative;
   margin: 0;
-  font-size: clamp(24px, 6vw, 42px);
+  font-size: clamp(23px, 5.6vw, 40px);
   font-weight: 900;
-  letter-spacing: -1px;
-  line-height: 1.05;
+  letter-spacing: -0.04em;
+  line-height: 1.06;
+  color: #fff;
 }
 
 .app-hero p {
-  color: var(--muted);
-  font-size: clamp(13px, 2.4vw, 16px);
+  position: relative;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: clamp(13px, 2.4vw, 15px);
   line-height: 1.5;
   margin: 8px 0 0;
+  max-width: 70ch;
 }
 
-/* --------------------------------------------------------------------------
-   Metric cards + Streamlit st.metric
-   -------------------------------------------------------------------------- */
+/* Pill used across heroes for status / context. */
+.eyebrow,
+.hero-pill,
+.catalog-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   CARDS + METRICS
+   ========================================================================== */
+
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: var(--gap);
 }
 
 .metric-card {
-  padding: 18px;
+  padding: 16px;
   border-radius: var(--r-lg);
   background: var(--bg-card);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
   box-shadow: var(--shadow-md);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
 }
 
 .metric-card h3 {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 800;
 }
 
 .metric-card strong {
   display: block;
-  margin-top: 8px;
-  font-size: clamp(22px, 5vw, 26px);
+  margin-top: 6px;
+  font-size: clamp(21px, 5vw, 26px);
   font-weight: 900;
+  color: var(--royal-deep);
 }
 
 div[data-testid="stMetric"] {
@@ -356,7 +496,9 @@ div[data-testid="stMetric"] {
 }
 
 div[data-testid="stMetricValue"] {
-  font-size: clamp(19px, 4.5vw, 26px) !important;
+  font-size: clamp(18px, 4.4vw, 25px) !important;
+  font-weight: 900 !important;
+  color: var(--royal-deep) !important;
 }
 
 div[data-testid="stMetricLabel"] {
@@ -364,7 +506,14 @@ div[data-testid="stMetricLabel"] {
   color: var(--muted) !important;
 }
 
-/* Tabs wrap instead of clipping their last item on narrow screens. */
+.section-title {
+  font-weight: 800;
+  font-size: clamp(15px, 3.4vw, 18px);
+  letter-spacing: -0.02em;
+  margin: 18px 0 9px;
+  color: var(--royal-ink);
+}
+
 .stTabs [data-baseweb="tab-list"] {
   flex-wrap: wrap !important;
   gap: 8px !important;
@@ -373,20 +522,39 @@ div[data-testid="stMetricLabel"] {
 .stTabs [data-baseweb="tab"] {
   border-radius: 999px !important;
   padding: 8px 14px !important;
-  background: rgba(255, 255, 255, 0.6) !important;
+  background: var(--royal-mist) !important;
+  color: var(--royal-deep) !important;
+  min-height: var(--tap);
 }
+
+.stTabs [aria-selected="true"] {
+  background: var(--blend-royal) !important;
+  color: #fff !important;
+}
+
+div[data-testid="stExpander"] {
+  border-radius: var(--r-md) !important;
+  border: 1px solid var(--border-soft) !important;
+  background: var(--bg-card);
+}
+
+div[data-testid="stExpander"] summary {
+  font-weight: 600;
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+}
+
+hr { border-color: var(--border-soft) !important; }
 
 /* ==========================================================================
    RESPONSIVE
    Streamlit columns are flex children that never wrap on their own, which is
-   why dense rows (draft actions, publish policies, order filters) crushed
-   down to unusable slivers. Below 900px they wrap; below 640px they stack.
+   why dense rows crushed to slivers. They wrap at 900, stack at 640.
    ========================================================================== */
 
 @media screen and (max-width: 900px) {
-  .block-container {
-    max-width: 100vw !important;
-  }
+  .block-container { max-width: 100vw !important; }
 
   [data-testid="stHorizontalBlock"]:not(.st-key-top_menu_area *) {
     flex-wrap: wrap !important;
@@ -402,7 +570,7 @@ div[data-testid="stMetricLabel"] {
   .block-container {
     padding-left: max(0.6rem, env(safe-area-inset-left, 0px)) !important;
     padding-right: max(0.6rem, env(safe-area-inset-right, 0px)) !important;
-    padding-top: 0.55rem !important;
+    padding-top: 0.5rem !important;
   }
 
   .top-nav {
@@ -411,58 +579,51 @@ div[data-testid="stMetricLabel"] {
     border-radius: var(--r-lg) !important;
   }
 
-  /* Two readable rows beat one unreadable one. */
+  /* Bubbles reflow to four across, type stays readable. */
   .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
     grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-    gap: 6px !important;
+    gap: 7px !important;
   }
 
   .st-key-top_menu_area div[data-testid="stButton"] button,
   .st-key-top_menu_area div[data-testid="stButton"] button p {
     font-size: 12px !important;
     letter-spacing: -0.2px !important;
-    line-height: 1.1 !important;
   }
 
-  .app-hero {
-    margin-bottom: 16px !important;
-  }
+  .app-hero { margin-bottom: 14px !important; }
+  .app-hero::after { width: 64px; height: 104px; opacity: 0.14; }
 }
 
 @media screen and (max-width: 640px) {
-  /* Full stack: every column gets the whole width. */
   [data-testid="stHorizontalBlock"]:not(.st-key-top_menu_area *) > [data-testid="stColumn"] {
     flex: 1 1 100% !important;
     width: 100% !important;
   }
 
-  /* Exception: rows explicitly marked as icon actions stay inline —
-     three tiny icon buttons stacked vertically is worse, not better. */
+  /* Icon-action rows stay inline — three tiny buttons stacked is worse. */
   .icon-row [data-testid="stColumn"] {
     flex: 1 1 auto !important;
     width: auto !important;
   }
 
-  div[data-testid="stMetric"] {
-    padding: 10px 12px;
-  }
+  div[data-testid="stMetric"] { padding: 10px 12px; }
 }
 
-@media screen and (max-width: 400px) {
+/* Three across on narrow phones, matching the current bubble layout. */
+@media screen and (max-width: 430px) {
   .st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
     grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 7px !important;
   }
 
   .st-key-top_menu_area div[data-testid="stButton"] button,
   .st-key-top_menu_area div[data-testid="stButton"] button p {
-    font-size: 11.5px !important;
+    font-size: 12.5px !important;
+    letter-spacing: -0.1px !important;
   }
 }
 
-/* Landscape phones: reclaim vertical space from the sticky bar. */
 @media screen and (max-height: 480px) and (orientation: landscape) {
-  .top-nav {
-    position: static;
-    padding: 9px 12px !important;
-  }
+  .top-nav { position: static; padding: 9px 12px !important; }
 }

@@ -14,7 +14,7 @@ import streamlit as st
 
 
 BASE_DIR = Path(__file__).resolve().parent
-CSS_PATH = BASE_DIR / "catalog_pro.css"
+CSS_PATH = BASE_DIR.parent / "styles" / "catalog_pro.css"
 DB_PATH = BASE_DIR / "catalog_pro.sqlite3"
 
 REQUIRED_PRODUCT_COLUMNS = [
@@ -272,18 +272,18 @@ def render_catalog_pro() -> None:
 
     st.markdown(
         """
-        <section class="catalog-hero">
-            <div>
-                <span class="catalog-pill">eBay IO • Catalog-Pro</span>
-                <h1>Wholesale Catalog Engine</h1>
-                <p>Import supplier feeds, filter to 3–5 day shipping, clean SEO titles, and push winners into eBay-ready draft exports.</p>
-            </div>
-            <div class="catalog-hero-card">
-                <b>Goal</b><br>
-                Build a supplier database that can scale past 100,000 approved companies without fake listings or unsafe category uploads.
-            </div>
-        </section>
-        """,
+<section class="catalog-hero">
+<div>
+<span class="catalog-pill">eBay IO • Catalog-Pro</span>
+<h1>Wholesale Catalog Engine</h1>
+<p>Import supplier feeds, filter to 3–5 day shipping, clean SEO titles, and push winners into eBay-ready draft exports.</p>
+</div>
+<div class="catalog-hero-card">
+<b>Goal</b><br>
+Build a supplier database that can scale past 100,000 approved companies without fake listings or unsafe category uploads.
+</div>
+</section>
+""",
         unsafe_allow_html=True,
     )
 
@@ -394,9 +394,9 @@ def render_catalog_pro() -> None:
         st.dataframe(rules_df, use_container_width=True, hide_index=True)
         st.markdown(
             """
-            <div class="catalog-note">
-                <b>Production guardrails:</b> no fake supplier names, no fake stock, no non-leaf eBay categories, no restricted products, no brand/IP-risk items, and no publish until shipping, returns, payment policy, SKU, category aspects, image URL, and profit checks pass.
-            </div>
-            """,
+<div class="catalog-note">
+<b>Production guardrails:</b> no fake supplier names, no fake stock, no non-leaf eBay categories, no restricted products, no brand/IP-risk items, and no publish until shipping, returns, payment policy, SKU, category aspects, image URL, and profit checks pass.
+</div>
+""",
             unsafe_allow_html=True,
         )

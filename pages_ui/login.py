@@ -40,11 +40,11 @@ def _render_first_time_setup() -> None:
 
     st.markdown(
         """
-        <section class="app-hero">
-            <h1>Finish Account Setup</h1>
-            <p>Create the username and password you will use after your first token login.</p>
-        </section>
-        """,
+<section class="app-hero">
+<h1>Finish Account Setup</h1>
+<p>Create the username and password you will use after your first token login.</p>
+</section>
+""",
         unsafe_allow_html=True,
     )
     st.info(f"Welcome, **{client_name}**. Your access code worked. Now create your permanent login.")
@@ -77,11 +77,11 @@ def _render_first_time_setup() -> None:
 def _render_reset_login() -> None:
     st.markdown(
         """
-        <section class="app-hero">
-            <h1>Reset Client Login</h1>
-            <p>Use your original access code to reset your username or password.</p>
-        </section>
-        """,
+<section class="app-hero">
+<h1>Reset Client Login</h1>
+<p>Use your original access code to reset your username or password.</p>
+</section>
+""",
         unsafe_allow_html=True,
     )
 
@@ -129,11 +129,11 @@ def render_login() -> None:
 
     st.markdown(
         """
-        <section class="app-hero">
-            <h1>Welcome to Ebay io</h1>
-            <p>Secure access for CEOs and clients.</p>
-        </section>
-        """,
+<section class="app-hero">
+<h1>Welcome to Ebay io</h1>
+<p>Secure access for CEOs and clients.</p>
+</section>
+""",
         unsafe_allow_html=True,
     )
 

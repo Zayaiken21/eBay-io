@@ -40,10 +40,10 @@ CSS = """<style>
 *, *::before, *::after { box-sizing: border-box; }
 
 .pro-hero {
-    background: linear-gradient(135deg, #0053a0 0%, #002d6b 100%);
-    color: #fff; padding: 28px 34px; border-radius: 14px; margin-bottom: 22px;
-    display: flex; align-items: center; justify-content: space-between;
-    flex-wrap: wrap; gap: 16px; box-shadow: 0 4px 24px rgba(0,83,160,0.18);
+background: linear-gradient(135deg, #0053a0 0%, #002d6b 100%);
+color: #fff; padding: 28px 34px; border-radius: 14px; margin-bottom: 22px;
+display: flex; align-items: center; justify-content: space-between;
+flex-wrap: wrap; gap: 16px; box-shadow: 0 4px 24px rgba(0,83,160,0.18);
 }
 .hero-left h1  { font-size: 26px; font-weight: 800; margin: 0 0 4px; letter-spacing: -0.4px; }
 .hero-left p   { opacity: 0.78; font-size: 13px; margin: 0; }
@@ -53,30 +53,30 @@ CSS = """<style>
 .hstat-lbl     { font-size: 10px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; }
 
 .acct-banner {
-    display: flex; align-items: center; gap: 10px;
-    background: #f0fff4; border: 1px solid #9ae6b4;
-    border-radius: 9px; padding: 10px 16px;
-    font-size: 13px; color: #276749; font-weight: 600; margin-bottom: 16px;
+display: flex; align-items: center; gap: 10px;
+background: #f0fff4; border: 1px solid #9ae6b4;
+border-radius: 9px; padding: 10px 16px;
+font-size: 13px; color: #276749; font-weight: 600; margin-bottom: 16px;
 }
 .acct-banner.disconnected { background: #fff8f0; border-color: #fbd38d; color: #744210; }
 
 .import-box {
-    background: linear-gradient(135deg, #f0f6ff 0%, #eaf0fe 100%);
-    border: 1.5px solid #c3d5f7; border-radius: 12px;
-    padding: 26px 28px; margin-bottom: 22px;
+background: linear-gradient(135deg, #f0f6ff 0%, #eaf0fe 100%);
+border: 1.5px solid #c3d5f7; border-radius: 12px;
+padding: 26px 28px; margin-bottom: 22px;
 }
 .import-box h3 { margin: 0 0 5px; color: #1a3a6b; font-size: 16px; font-weight: 800; }
 .import-box p  { margin: 0 0 16px; color: #4a5568; font-size: 13px; }
 .site-pills    { display: flex; flex-wrap: wrap; gap: 6px; }
 .site-pill {
-    background: white; border: 1px solid #d1ddf5; border-radius: 20px;
-    padding: 3px 11px; font-size: 11px; font-weight: 700; color: #2b5ba8;
+background: white; border: 1px solid #d1ddf5; border-radius: 20px;
+padding: 3px 11px; font-size: 11px; font-weight: 700; color: #2b5ba8;
 }
 
 .draft-row {
-    background: white; border: 1px solid #e8edf5; border-radius: 12px;
-    padding: 14px 16px; margin-bottom: 9px;
-    transition: box-shadow .15s, border-color .15s;
+background: white; border: 1px solid #e8edf5; border-radius: 12px;
+padding: 14px 16px; margin-bottom: 9px;
+transition: box-shadow .15s, border-color .15s;
 }
 .draft-row:hover { box-shadow: 0 3px 16px rgba(0,83,160,.09); border-color: #b8ccf0; }
 .draft-title { font-weight: 700; font-size: 14px; color: #1a202c; margin-bottom: 4px; line-height: 1.3; }
@@ -90,16 +90,16 @@ CSS = """<style>
 .b-ended    { background:#fee2e2; color:#991b1b; }
 
 .sec-hdr {
-    font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
-    color: #4a5568; margin: 26px 0 9px; padding-bottom: 6px;
-    border-bottom: 1.5px solid #e8edf5; display: flex; align-items: center; gap: 7px;
+font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
+color: #4a5568; margin: 26px 0 9px; padding-bottom: 6px;
+border-bottom: 1.5px solid #e8edf5; display: flex; align-items: center; gap: 7px;
 }
 .sec-hdr-icon { font-size: 13px; }
 
 .seo-row {
-    display: flex; align-items: center; gap: 10px;
-    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
-    padding: 10px 14px; margin-bottom: 18px;
+display: flex; align-items: center; gap: 10px;
+background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+padding: 10px 14px; margin-bottom: 18px;
 }
 .seo-track { flex: 1; height: 7px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
 .seo-fill  { height: 100%; border-radius: 4px; transition: width .4s ease; }
@@ -111,29 +111,29 @@ CSS = """<style>
 .chk-warn  { color:#d97706; font-size:15px; }
 
 .ef-card {
-    background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;
-    padding:12px 14px; margin-bottom:8px;
+background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;
+padding:12px 14px; margin-bottom:8px;
 }
 .ef-lbl  { font-size:10px; font-weight:800; color:#718096; text-transform:uppercase; letter-spacing:.08em; margin-bottom:3px; }
 .ef-val  { font-size:14px; font-weight:600; color:#1a202c; word-break:break-all; }
 
 .upload-panel {
-    background: linear-gradient(135deg,#f0fff4 0%,#e6ffee 100%);
-    border: 1.5px solid #9ae6b4; border-radius: 12px; padding: 22px;
+background: linear-gradient(135deg,#f0fff4 0%,#e6ffee 100%);
+border: 1.5px solid #9ae6b4; border-radius: 12px; padding: 22px;
 }
 .upload-panel h4 { color:#276749; margin:0 0 5px; font-size:15px; font-weight:800; }
 .upload-panel p  { color:#4a5568; font-size:13px; margin:0 0 14px; }
 
 .no-connect-panel {
-    background: #fff8f0; border: 1.5px solid #fbd38d; border-radius: 12px; padding: 22px;
+background: #fff8f0; border: 1.5px solid #fbd38d; border-radius: 12px; padding: 22px;
 }
 .no-connect-panel h4 { color:#92400e; margin:0 0 6px; font-size:15px; font-weight:800; }
 .no-connect-panel p  { color:#744210; font-size:13px; margin:0; }
 
 .listing-success {
-    background: linear-gradient(135deg,#f0fff4,#e6ffee);
-    border: 2px solid #48bb78; border-radius: 12px;
-    padding: 22px; text-align: center; margin-top: 16px;
+background: linear-gradient(135deg,#f0fff4,#e6ffee);
+border: 2px solid #48bb78; border-radius: 12px;
+padding: 22px; text-align: center; margin-top: 16px;
 }
 .listing-success .ls-id  { font-size: 28px; font-weight: 900; color: #276749; }
 .listing-success .ls-sub { font-size: 13px; color: #4a7c59; margin-top: 4px; }
@@ -148,8 +148,8 @@ CSS = """<style>
 
 /* ── Store listing row ── */
 .store-row {
-    background: white; border: 1px solid #e8edf5; border-radius: 12px;
-    padding: 12px 16px; margin-bottom: 8px;
+background: white; border: 1px solid #e8edf5; border-radius: 12px;
+padding: 12px 16px; margin-bottom: 8px;
 }
 .store-sku { font-size: 11px; color: #a0aec0; font-family: monospace; }
 
@@ -228,15 +228,15 @@ def _hero(total_drafts: int):
     owner      = _owner()
     role_label = "CEO" if role == "ceo" else owner
     st.markdown(f"""
-    <div class="pro-hero">
-      <div class="hero-left">
-        <h1>📦 Product Manager</h1>
-        <p>Logged in as <strong>{role_label}</strong> · Import · Optimize · Publish</p>
-      </div>
-      <div class="hero-stats">
-        <div class="hstat"><div class="hstat-num">{total_drafts}</div><div class="hstat-lbl">Drafts</div></div>
-      </div>
-    </div>""", unsafe_allow_html=True)
+<div class="pro-hero">
+<div class="hero-left">
+<h1>📦 Product Manager</h1>
+<p>Logged in as <strong>{role_label}</strong> · Import · Optimize · Publish</p>
+</div>
+<div class="hero-stats">
+<div class="hstat"><div class="hstat-num">{total_drafts}</div><div class="hstat-lbl">Drafts</div></div>
+</div>
+</div>""", unsafe_allow_html=True)
 
 
 def _account_banner():
@@ -244,7 +244,7 @@ def _account_banner():
         info = get_account_info()
     except Exception as e:
         st.markdown(f"""<div class="acct-banner disconnected">
-            ⚠️ &nbsp;Could not read eBay account: {e}</div>""", unsafe_allow_html=True)
+⚠️ &nbsp;Could not read eBay account: {e}</div>""", unsafe_allow_html=True)
         return
 
     if info:
@@ -253,13 +253,13 @@ def _account_banner():
         env     = info.get("environment", "production")
         env_tag = " · Sandbox" if env != "production" else " · Live"
         st.markdown(f"""<div class="acct-banner">
-            ✅ &nbsp;Connected: <strong>{label}</strong>{env_tag}
-            &nbsp;·&nbsp; Listings post to this account</div>""", unsafe_allow_html=True)
+✅ &nbsp;Connected: <strong>{label}</strong>{env_tag}
+&nbsp;·&nbsp; Listings post to this account</div>""", unsafe_allow_html=True)
     else:
         owner = _owner()
         st.markdown(f"""<div class="acct-banner disconnected">
-            ⚠️ &nbsp;No eBay account connected for <code>{owner}</code> — go to
-            <strong>Settings</strong> to connect your store</div>""", unsafe_allow_html=True)
+⚠️ &nbsp;No eBay account connected for <code>{owner}</code> — go to
+<strong>Settings</strong> to connect your store</div>""", unsafe_allow_html=True)
 
 
 # ─── Tab navigation ───────────────────────────────────────────────────────────
@@ -328,18 +328,18 @@ def _pagination(current_page: int, total_pages: int, key_prefix: str, on_change_
 
 def _tab_import():
     st.markdown("""
-    <div class="import-box">
-      <h3>🔗 Import Product from Any Store</h3>
-      <p>Paste any product URL — automatically extracts title, images, price, description, features, and specs,
-         then automatically applies SEO optimization. No extra steps needed.</p>
-      <div class="site-pills">
-        <span class="site-pill">🛒 Amazon</span><span class="site-pill">🏪 eBay</span>
-        <span class="site-pill">🔵 Walmart</span><span class="site-pill">🟠 AliExpress</span>
-        <span class="site-pill">🛍️ Temu</span><span class="site-pill">🟢 Etsy</span>
-        <span class="site-pill">🎯 Target</span><span class="site-pill">💛 Best Buy</span>
-        <span class="site-pill">🏠 Home Depot</span><span class="site-pill">+ Any Shopify Store</span>
-      </div>
-    </div>""", unsafe_allow_html=True)
+<div class="import-box">
+<h3>🔗 Import Product from Any Store</h3>
+<p>Paste any product URL — automatically extracts title, images, price, description, features, and specs,
+then automatically applies SEO optimization. No extra steps needed.</p>
+<div class="site-pills">
+<span class="site-pill">🛒 Amazon</span><span class="site-pill">🏪 eBay</span>
+<span class="site-pill">🔵 Walmart</span><span class="site-pill">🟠 AliExpress</span>
+<span class="site-pill">🛍️ Temu</span><span class="site-pill">🟢 Etsy</span>
+<span class="site-pill">🎯 Target</span><span class="site-pill">💛 Best Buy</span>
+<span class="site-pill">🏠 Home Depot</span><span class="site-pill">+ Any Shopify Store</span>
+</div>
+</div>""", unsafe_allow_html=True)
 
     url = st.text_input("URL", placeholder="https://www.amazon.com/dp/... or any product page URL",
                         label_visibility="collapsed", key="import_url_field")
@@ -423,11 +423,11 @@ def _show_import_result(p: dict):
                  "low":  "Limited data — JS site, fill manually"}.get(conf, "")
 
     st.markdown(f"""
-    <div style="margin:18px 0 12px;display:flex;align-items:center;gap:10px;">
-      <span style="font-size:16px;font-weight:800;">Extracted Product</span>
-      <span class="badge b-draft">{conf_icon} {conf.title()} Confidence</span>
-      <span style="font-size:12px;color:#718096;">{conf_msg}</span>
-    </div>""", unsafe_allow_html=True)
+<div style="margin:18px 0 12px;display:flex;align-items:center;gap:10px;">
+<span style="font-size:16px;font-weight:800;">Extracted Product</span>
+<span class="badge b-draft">{conf_icon} {conf.title()} Confidence</span>
+<span style="font-size:12px;color:#718096;">{conf_msg}</span>
+</div>""", unsafe_allow_html=True)
 
     c1, c2 = st.columns([3, 2])
     with c1:
@@ -490,16 +490,16 @@ def _show_manual_entry_form():
     src_url = st.session_state.get("bot_wall_url", "")
 
     st.markdown(f"""
-    <div class="import-box" style="border-color:#fbd38d;background:linear-gradient(135deg,#fff8f0,#fff3e0);">
-      <h3 style="color:#92400e;">✋ Manual Entry — {domain or "this site"} blocked automated access</h3>
-      <p style="color:#744210;">
-        This site uses anti-bot protection (CAPTCHA / "press and hold to verify you're human")
-        that no page-fetching tool can pass — only a real browser with a human
-        actually completing the challenge can get through. Paste the product details
-        below and we'll still auto-apply SEO optimization, image handling, and
-        eBay formatting exactly like an automatic import.
-      </p>
-    </div>""", unsafe_allow_html=True)
+<div class="import-box" style="border-color:#fbd38d;background:linear-gradient(135deg,#fff8f0,#fff3e0);">
+<h3 style="color:#92400e;">✋ Manual Entry — {domain or "this site"} blocked automated access</h3>
+<p style="color:#744210;">
+This site uses anti-bot protection (CAPTCHA / "press and hold to verify you're human")
+that no page-fetching tool can pass — only a real browser with a human
+actually completing the challenge can get through. Paste the product details
+below and we'll still auto-apply SEO optimization, image handling, and
+eBay formatting exactly like an automatic import.
+</p>
+</div>""", unsafe_allow_html=True)
 
     with st.form("manual_entry_form", clear_on_submit=False):
         st.text_input("Source URL (for reference)", value=src_url, disabled=True)
@@ -625,15 +625,15 @@ def _tab_drafts():
                             unsafe_allow_html=True)
         with cd_info:
             st.markdown(f"""
-            <div class="draft-title">{title[:65]}{"…" if len(title)>65 else ""}</div>
-            <div class="draft-meta">
-              <span class="badge {bmap.get(status,'b-draft')}">{status.title()}</span>
-              <span>{"$"+price if price else "No price"}</span>
-              {"<span>"+domain+"</span>" if domain else ""}
-              <span>{len(imgs)} img{"s" if len(imgs)!=1 else ""}</span>
-              <span style="color:{cdot};">● {conf.title()}</span>
-              <span>Updated {upd}</span>
-            </div>""", unsafe_allow_html=True)
+<div class="draft-title">{title[:65]}{"…" if len(title)>65 else ""}</div>
+<div class="draft-meta">
+<span class="badge {bmap.get(status,'b-draft')}">{status.title()}</span>
+<span>{"$"+price if price else "No price"}</span>
+{"<span>"+domain+"</span>" if domain else ""}
+<span>{len(imgs)} img{"s" if len(imgs)!=1 else ""}</span>
+<span style="color:{cdot};">● {conf.title()}</span>
+<span>Updated {upd}</span>
+</div>""", unsafe_allow_html=True)
         with ca:
             b1, b2, b3 = st.columns(3)
             with b1:
@@ -765,12 +765,12 @@ def _tab_editor():
     color = "#48bb78" if score >= 70 else "#ed8936" if score >= 40 else "#fc8181"
     label = "Excellent" if score >= 85 else "Good" if score >= 70 else "Fair" if score >= 40 else "Needs Work"
     st.markdown(f"""
-    <div class="seo-row">
-      <span class="seo-lbl-txt">SEO Score</span>
-      <div class="seo-track"><div class="seo-fill" style="width:{score}%;background:{color};"></div></div>
-      <span class="seo-label" style="color:{color};">{score}/100</span>
-      <span style="font-size:12px;color:#718096;">{label}</span>
-    </div>""", unsafe_allow_html=True)
+<div class="seo-row">
+<span class="seo-lbl-txt">SEO Score</span>
+<div class="seo-track"><div class="seo-fill" style="width:{score}%;background:{color};"></div></div>
+<span class="seo-label" style="color:{color};">{score}/100</span>
+<span style="font-size:12px;color:#718096;">{label}</span>
+</div>""", unsafe_allow_html=True)
 
     col_l, col_r = st.columns([3, 2])
 
@@ -1015,11 +1015,11 @@ def _upload_panel(p: dict, exp: dict):
 
     if not info:
         st.markdown(f"""
-        <div class="no-connect-panel">
-          <h4>⚠️ No eBay Account Connected</h4>
-          <p>Go to <strong>Settings → eBay</strong> to connect your store via OAuth,
-          then return here to publish directly with one click.</p>
-        </div>""", unsafe_allow_html=True)
+<div class="no-connect-panel">
+<h4>⚠️ No eBay Account Connected</h4>
+<p>Go to <strong>Settings → eBay</strong> to connect your store via OAuth,
+then return here to publish directly with one click.</p>
+</div>""", unsafe_allow_html=True)
         st.caption(f"Resolved owner_name: `{owner}` · Make sure the eBay account was connected under this name.")
         with st.expander("📋 Publish manually instead (no eBay connection yet)"):
             st.markdown("Copy the HTML below, then on eBay: Create Listing → Description → click **HTML** → paste.")
@@ -1040,11 +1040,11 @@ def _upload_panel(p: dict, exp: dict):
     resolved_owner = info.get("_resolved_owner", owner)
 
     st.markdown(f"""
-    <div class="upload-panel">
-      <h4>🚀 Publish to eBay{env_tag}</h4>
-      <p>Listing will be posted to <strong>{acct_label}</strong>.
-         Token auto-refreshes on every publish — never stale.</p>
-    </div>""", unsafe_allow_html=True)
+<div class="upload-panel">
+<h4>🚀 Publish to eBay{env_tag}</h4>
+<p>Listing will be posted to <strong>{acct_label}</strong>.
+Token auto-refreshes on every publish — never stale.</p>
+</div>""", unsafe_allow_html=True)
     st.caption(f"Owner: `{resolved_owner}` · Environment: `{env}`")
 
     st.markdown("**Listing Policies** — required by eBay Inventory API:")
@@ -1169,11 +1169,11 @@ def _upload_panel(p: dict, exp: dict):
                 "error_fallback": "⚠️ fallback category — consider picking one explicitly above",
             }.get(ur.get("category_source",""), "")
             st.markdown(f"""
-            <div class="listing-success">
-              <div style="font-size:32px;margin-bottom:8px;">🎉</div>
-              <div class="ls-id">{ur.get('listing_id','')}</div>
-              <div class="ls-sub">Published to eBay {env_lbl} · SKU: {ur.get('sku','')}</div>
-            </div>""", unsafe_allow_html=True)
+<div class="listing-success">
+<div style="font-size:32px;margin-bottom:8px;">🎉</div>
+<div class="ls-id">{ur.get('listing_id','')}</div>
+<div class="ls-sub">Published to eBay {env_lbl} · SKU: {ur.get('sku','')}</div>
+</div>""", unsafe_allow_html=True)
             if ur.get("category_id"):
                 st.caption(f"Category used: `{ur['category_id']}` — {cat_src_label}")
             if ur.get("listing_url"):
@@ -1207,10 +1207,10 @@ def _tab_store():
 
     if not info:
         st.markdown("""
-        <div class="no-connect-panel">
-          <h4>⚠️ No eBay Account Connected</h4>
-          <p>Connect your store in <strong>Settings</strong> to see your live listings here.</p>
-        </div>""", unsafe_allow_html=True)
+<div class="no-connect-panel">
+<h4>⚠️ No eBay Account Connected</h4>
+<p>Connect your store in <strong>Settings</strong> to see your live listings here.</p>
+</div>""", unsafe_allow_html=True)
         return
 
     crf, _ = st.columns([2, 5])
@@ -1248,15 +1248,15 @@ def _tab_store():
         c1, c2, c3, c4 = st.columns([4, 2, 2, 2])
         with c1:
             st.markdown(f"""
-            <div class="store-row">
-              <div class="draft-title">{item['title'][:70]}</div>
-              <div class="draft-meta">
-                <span class="badge b-live">{item.get('status','ACTIVE')}</span>
-                <span>${item.get('price','—')}</span>
-                <span>Qty: {item.get('quantity', 0)}</span>
-                <span class="store-sku">SKU: {item.get('sku','')}</span>
-              </div>
-            </div>""", unsafe_allow_html=True)
+<div class="store-row">
+<div class="draft-title">{item['title'][:70]}</div>
+<div class="draft-meta">
+<span class="badge b-live">{item.get('status','ACTIVE')}</span>
+<span>${item.get('price','—')}</span>
+<span>Qty: {item.get('quantity', 0)}</span>
+<span class="store-sku">SKU: {item.get('sku','')}</span>
+</div>
+</div>""", unsafe_allow_html=True)
         with c2:
             if item.get("listing_url"):
                 st.markdown(f"[🔗 View on eBay]({item['listing_url']})")

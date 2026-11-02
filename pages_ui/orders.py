@@ -23,25 +23,25 @@ EASTERN_TZ = ZoneInfo("America/New_York") if ZoneInfo else timezone(timedelta(ho
 
 def _css() -> str:
     return """
-    <style>
-      .orders-hero {
-        background: linear-gradient(135deg, rgba(15,23,42,0.96), rgba(30,41,59,0.92));
-        border: 1px solid rgba(148,163,184,0.16);
-        border-radius: 26px;
-        padding: 1.1rem 1.25rem;
-        margin-bottom: 1rem;
-      }
-      .orders-hero h1 { margin: 0; color: #f8fafc; font-size: 2rem; letter-spacing: -0.03em; }
-      .orders-hero p { margin: 0.35rem 0 0 0; color: #cbd5e1; }
-      .soft-card {
-        background: rgba(15,23,42,0.72);
-        border: 1px solid rgba(148,163,184,0.14);
-        border-radius: 20px;
-        padding: 1rem;
-      }
-      .small-muted { color:#94a3b8; font-size:0.9rem; }
-    </style>
-    """
+<style>
+.orders-hero {
+background: linear-gradient(135deg, rgba(15,23,42,0.96), rgba(30,41,59,0.92));
+border: 1px solid rgba(148,163,184,0.16);
+border-radius: 26px;
+padding: 1.1rem 1.25rem;
+margin-bottom: 1rem;
+}
+.orders-hero h1 { margin: 0; color: #f8fafc; font-size: 2rem; letter-spacing: -0.03em; }
+.orders-hero p { margin: 0.35rem 0 0 0; color: #cbd5e1; }
+.soft-card {
+background: rgba(15,23,42,0.72);
+border: 1px solid rgba(148,163,184,0.14);
+border-radius: 20px;
+padding: 1rem;
+}
+.small-muted { color:#94a3b8; font-size:0.9rem; }
+</style>
+"""
 
 
 def _owner_candidates() -> list[str]:
@@ -286,11 +286,11 @@ def render_orders():
     st.markdown(_css(), unsafe_allow_html=True)
     st.markdown(
         """
-        <div class="orders-hero">
-          <h1>Orders Command Board</h1>
-          <p>Live eBay orders from your connected OAuth seller account. Dates are selected in Eastern Time and safely converted for eBay.</p>
-        </div>
-        """,
+<div class="orders-hero">
+<h1>Orders Command Board</h1>
+<p>Live eBay orders from your connected OAuth seller account. Dates are selected in Eastern Time and safely converted for eBay.</p>
+</div>
+""",
         unsafe_allow_html=True,
     )
 

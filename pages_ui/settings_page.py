@@ -59,11 +59,11 @@ def process_ebay_oauth_callback_if_present() -> bool:
 def render_settings() -> None:
     st.markdown(
         """
-        <section class="app-hero">
-            <h1>Settings</h1>
-            <p>Manage secure eBay access and account controls.</p>
-        </section>
-        """,
+<section class="app-hero">
+<h1>Settings</h1>
+<p>Manage secure eBay access and account controls.</p>
+</section>
+""",
         unsafe_allow_html=True,
     )
 

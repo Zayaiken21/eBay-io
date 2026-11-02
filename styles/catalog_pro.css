@@ -1,71 +1,102 @@
+/* ==========================================================================
+   catalog_pro.css — Wholesale catalog engine
+   Loaded by catalog_pro.py. The old path pointed at pages_ui/catalog_pro.css,
+   which does not exist, so this page rendered unstyled.
+   Repalette: was amber-on-black, now the app's royal blend.
+   ========================================================================== */
+
 .catalog-hero {
-    display: grid;
-    grid-template-columns: minmax(0, 1.6fr) minmax(260px, .8fr);
-    gap: 18px;
-    align-items: stretch;
-    padding: 24px;
-    border-radius: 24px;
-    background: radial-gradient(circle at top left, rgba(255, 190, 92, .18), transparent 34%), linear-gradient(135deg, rgba(15, 23, 42, .96), rgba(2, 6, 23, .92));
-    border: 1px solid rgba(255, 255, 255, .10);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, .28);
-    margin-bottom: 18px;
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.8fr);
+  gap: 16px;
+  align-items: stretch;
+  padding: clamp(16px, 4vw, 24px);
+  border-radius: var(--r-xl);
+  background:
+    radial-gradient(circle at top left, rgba(146, 255, 24, 0.20), transparent 36%),
+    var(--blend-royal);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 18px 50px rgba(36, 87, 255, 0.22);
+  margin-bottom: 16px;
 }
+
+.catalog-hero::after {
+  content: "";
+  position: absolute;
+  bottom: -18%;
+  right: -3%;
+  width: 104px;
+  height: 170px;
+  background: linear-gradient(160deg, var(--yellow-green), var(--lime-green));
+  clip-path: polygon(56% 0%, 12% 56%, 44% 56%, 30% 100%, 88% 40%, 52% 40%);
+  opacity: 0.15;
+  pointer-events: none;
+  animation: bolt-charge 6.5s ease-in-out infinite;
+}
+
 .catalog-hero h1 {
-    font-size: clamp(2rem, 4vw, 4rem);
-    line-height: .96;
-    margin: 10px 0 8px;
-    color: #fff;
-    letter-spacing: -0.05em;
+  position: relative;
+  font-size: clamp(1.55rem, 4.4vw, 3rem);
+  line-height: 1.02;
+  margin: 10px 0 8px;
+  color: #fff;
+  letter-spacing: -0.05em;
 }
+
 .catalog-hero p {
-    color: rgba(255, 255, 255, .76);
-    font-size: 1rem;
-    max-width: 780px;
-    margin: 0;
+  position: relative;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: clamp(0.82rem, 2.4vw, 0.98rem);
+  line-height: 1.5;
+  max-width: 68ch;
+  margin: 0;
 }
-.catalog-pill {
-    display: inline-flex;
-    width: fit-content;
-    padding: 7px 11px;
-    border-radius: 999px;
-    color: #ffcf8a;
-    border: 1px solid rgba(255, 207, 138, .35);
-    background: rgba(255, 207, 138, .08);
-    font-weight: 800;
-    font-size: .78rem;
-    text-transform: uppercase;
-    letter-spacing: .08em;
-}
+
 .catalog-hero-card {
-    padding: 18px;
-    border-radius: 20px;
-    background: rgba(255, 255, 255, .08);
-    border: 1px solid rgba(255, 255, 255, .12);
-    color: rgba(255, 255, 255, .82);
-    backdrop-filter: blur(14px);
+  position: relative;
+  padding: 16px;
+  border-radius: var(--r-lg);
+  background: rgba(255, 255, 255, 0.13);
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  color: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
+
 .catalog-note {
-    padding: 16px 18px;
-    border-radius: 18px;
-    background: rgba(245, 158, 11, .10);
-    border: 1px solid rgba(245, 158, 11, .25);
-    color: rgba(255, 255, 255, .88);
-    margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  color: #744210;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  margin-top: 12px;
 }
-div[data-testid="stMetric"] {
-    background: rgba(255, 255, 255, .05);
-    border: 1px solid rgba(255, 255, 255, .08);
-    padding: 12px 14px;
-    border-radius: 18px;
+
+/* The uploader is the primary action on the Import tab. */
+[data-testid="stFileUploader"] section {
+  border-radius: var(--r-md) !important;
+  border: 1.5px dashed rgba(36, 87, 255, 0.34) !important;
+  background: var(--royal-mist) !important;
+  min-height: 92px;
 }
-.stTabs [data-baseweb="tab-list"] {
-    gap: 8px;
+
+[data-testid="stFileUploader"] section:hover {
+  border-color: var(--royal-blue) !important;
+  background: #e2ecff !important;
 }
-.stTabs [data-baseweb="tab"] {
-    border-radius: 999px;
-    padding: 8px 14px;
-    background: rgba(255, 255, 255, .05);
-}
+
 @media (max-width: 780px) {
-    .catalog-hero { grid-template-columns: 1fr; padding: 18px; }
+  .catalog-hero {
+    grid-template-columns: 1fr;
+    border-radius: var(--r-lg);
+  }
+
+  .catalog-hero::after { width: 74px; height: 120px; }
 }
