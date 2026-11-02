@@ -1,0 +1,20 @@
+# Pin the theme.
+#
+# Without this, Streamlit follows the viewer's OS setting. On a phone in dark
+# mode it rendered dark inputs and buttons with white labels, while styles.css
+# forced a light page background — black boxes on a pale page, with unreadable
+# labels. The app's stylesheets are written for a light surface, so the theme
+# has to be fixed rather than inherited.
+[theme]
+base = "light"
+primaryColor = "#2457ff"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f7f9fc"
+textColor = "#0f172a"
+font = "sans serif"
+
+[client]
+showErrorDetails = true
+
+[browser]
+gatherUsageStats = false

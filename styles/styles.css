@@ -681,3 +681,53 @@ hr { border-color: var(--border-soft) !important; }
 @media screen and (max-height: 480px) and (orientation: landscape) {
   .top-nav { position: static; padding: 9px 12px !important; }
 }
+
+/* --------------------------------------------------------------------------
+   Widget surfaces.
+   config.toml pins the theme, but a viewer whose browser forces dark mode can
+   still flip Streamlit's widget colours. These rules keep inputs, selects and
+   buttons on a light surface so labels never end up white-on-white or the
+   fields black on a pale page.
+   -------------------------------------------------------------------------- */
+.stTextInput input,
+.stTextArea textarea,
+.stNumberInput input,
+.stDateInput input,
+.stPassword input,
+[data-baseweb="input"],
+[data-baseweb="base-input"],
+[data-baseweb="textarea"],
+[data-baseweb="select"] > div {
+  background-color: #fff !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  -webkit-text-fill-color: var(--text) !important;
+}
+
+.stTextInput input::placeholder,
+.stTextArea textarea::placeholder {
+  color: var(--muted-2) !important;
+  -webkit-text-fill-color: var(--muted-2) !important;
+}
+
+/* Field labels and help text sit on the page, not on a dark chrome. */
+.stTextInput label,
+.stTextArea label,
+.stSelectbox label,
+.stNumberInput label,
+.stDateInput label,
+[data-testid="stWidgetLabel"] p {
+  color: var(--text) !important;
+}
+
+/* Secondary buttons: white face, readable label. */
+.stButton > button:not([kind="primary"]),
+.stDownloadButton > button {
+  background: #fff !important;
+  color: var(--royal-deep) !important;
+  border: 1px solid var(--border) !important;
+}
+
+.stButton > button:not([kind="primary"]) p {
+  color: var(--royal-deep) !important;
+}
