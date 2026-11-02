@@ -353,10 +353,35 @@ def _fetch_market_products(
             )
             all_products.append(product)
 
-        if not insights_24 and err_24:
-            # Only store one concise note, not full technical API text.
-            if "marketplace_insights" not in " ".join(errors).lower():
-                errors.append("Marketplace Insights sold-history data is not available for this app/account yet; showing active marketplace products.")
+        # Report what actually went wrong. Collapsing every failure into
+        # "not available for this app/account" hid real, fixable faults: a
+        # rejected date filter, a missing OAuth scope and a genuine access
+        # denial all produced the same message, so a working Insights
+        # subscription looked identical to a broken request.
+        for window, err in (("24h", err_24), ("90d", err_90)):
+            if not err:
+                continue
+            text = str(err)
+            low = text.lower()
+            if "403" in low or "insufficient" in low or "scope" in low:
+                msg = (f"Marketplace Insights ({window}) refused the request: {text}. "
+                       f"This usually means the app's OAuth token is missing the "
+                       f"buy.marketplace.insights scope — reconnect the eBay account "
+                       f"in Settings so the new scope is granted.")
+            elif "400" in low or "invalid" in low:
+                msg = (f"Marketplace Insights ({window}) rejected the query as invalid: "
+                       f"{text}. The date filter or keyword is malformed.")
+            else:
+                msg = f"Marketplace Insights ({window}) failed: {text}"
+            if msg not in errors:
+                errors.append(msg)
+
+        # Access worked but matched nothing — a real, different answer.
+        if (insights_24 or insights_90) and not (sold_24_total or sold_90_total):
+            note = (f"Marketplace Insights returned no completed sales for "
+                    f"'{keyword}' in the last 90 days.")
+            if note not in errors:
+                errors.append(note)
 
     deduped: Dict[str, Dict[str, Any]] = {}
     for product in all_products:
@@ -373,7 +398,7 @@ def _fetch_market_products(
         "sample": all_products,
         "niche_totals": niche_totals,
         "niche_sold": niche_sold,
-        "errors": errors[:3],
+        "errors": errors[:6],
         "generated_at_est": _now_est().strftime("%b %d, %Y %I:%M %p EST"),
         "reset_key": reset_key,
     }

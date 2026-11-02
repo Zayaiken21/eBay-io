@@ -17,6 +17,10 @@ DEFAULT_SCOPES = [
     "https://api.ebay.com/oauth/api_scope/sell.inventory",
     "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
     "https://api.ebay.com/oauth/api_scope/sell.marketing",
+    # Required for /buy/marketplace_insights (sold-history data). Without it
+    # the token cannot call Insights at all, so every sold figure came back
+    # zero no matter what access the eBay app itself had granted.
+    "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights",
 ]
 
 
