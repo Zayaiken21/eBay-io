@@ -245,7 +245,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r20 · 2026-11-02"
+APP_BUILD = "r21 · 2026-11-02"
 
 
 def _account_banner():
@@ -593,11 +593,19 @@ come back here and press **Import capture**.
         try:
             st.code(build_bookmarklet(owner, token), language="javascript")
         except RuntimeError as exc:
-            st.error(
-                f"⚠️ {exc}\n\nAdd **SUPABASE_ANON_KEY** to your Streamlit "
-                f"secrets (Supabase → Project Settings → API → anon public). "
-                f"Until then, use the paste box above."
-            )
+            st.error(f"⚠️ {exc}")
+            try:
+                from core.import_inbox import secrets_diagnostic
+                st.caption("Supabase secrets this app can currently see:")
+                for line in secrets_diagnostic():
+                    st.markdown(f"- {line}")
+                st.caption(
+                    "Key names and roles only — no key values are shown. If your "
+                    "anon key is saved under a different name, rename it to "
+                    "SUPABASE_ANON_KEY in Streamlit secrets."
+                )
+            except Exception:
+                pass
             return
         st.caption(
             f"The page you capture is deleted as soon as you import it, and "

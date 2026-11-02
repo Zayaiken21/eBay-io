@@ -64,9 +64,15 @@ def _publishable_key() -> str:
     entirely and grants full access to every table, so it must never leave
     the server.
     """
+    # Accept the names Supabase has used across dashboard versions, so a key
+    # that is present under any of them is found rather than reported missing.
     return str(
         st.secrets.get("SUPABASE_ANON_KEY")
         or st.secrets.get("SUPABASE_PUBLISHABLE_KEY")
+        or st.secrets.get("SUPABASE_PUBLIC_KEY")
+        or st.secrets.get("SUPABASE_KEY")
+        or st.secrets.get("SUPABASE_API_KEY")
+        or st.secrets.get("ANON_KEY")
         or ""
     )
 
@@ -77,6 +83,59 @@ def is_configured() -> bool:
 
 def can_build_bookmarklet() -> bool:
     return bool(_supabase_url() and _publishable_key())
+
+
+def secrets_diagnostic() -> list[str]:
+    """
+    Which Supabase-looking secret names exist, and what each one holds.
+
+    Reports names and key ROLE only — never a key value. Exists because
+    "no anon key" is indistinguishable from "the anon key is saved under a
+    name the app does not read" without looking.
+    """
+    import base64
+    import json as _json
+
+    findings = []
+    candidates = [
+        "SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_PUBLIC_KEY",
+        "SUPABASE_KEY", "SUPABASE_API_KEY", "ANON_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY", "SUPABASE_URL",
+    ]
+    for name in candidates:
+        try:
+            raw = st.secrets.get(name)
+        except Exception:
+            raw = None
+        if not raw:
+            continue
+        value = str(raw)
+
+        if name == "SUPABASE_URL":
+            findings.append(f"`{name}` — set")
+            continue
+
+        role = "unknown"
+        if value.startswith("sb_publishable_"):
+            role = "publishable (safe for the bookmarklet)"
+        elif value.startswith("sb_secret_"):
+            role = "secret — server only"
+        else:
+            # Decode the JWT payload to read its role claim. No signature
+            # check: this only reports what the key says it is.
+            try:
+                payload = value.split(".")[1]
+                payload += "=" * (-len(payload) % 4)
+                claim = _json.loads(base64.urlsafe_b64decode(payload)).get("role", "")
+                role = {
+                    "anon": "anon (safe for the bookmarklet)",
+                    "service_role": "service_role — server only, NEVER in a bookmarklet",
+                }.get(claim, claim or "unknown")
+            except Exception:
+                pass
+        findings.append(f"`{name}` — {role}")
+
+    return findings or ["No Supabase secrets found at all."]
 
 
 def _headers(prefer: str | None = None) -> dict[str, str]:
