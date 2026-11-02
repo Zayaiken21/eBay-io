@@ -647,21 +647,33 @@ def _render_charts(products: List[Dict[str, Any]], result: Dict[str, Any] = None
 
     st.markdown("<div class='section-title'>Niche Comparison</div>", unsafe_allow_html=True)
 
+    top = df.iloc[0]
+    # delta_color="off" throughout: these captions are context, not movement.
+    # Rendered as deltas they drew green up-arrows on figures that had not
+    # risen — including "0.0% of active supply".
     if has_sold:
-        top = df.iloc[0]
         a, b, c, d = st.columns(4)
         a.metric("Best sell-through", top["niche"],
-                 f"{top['sell_through_pct']}% of active supply")
-        b.metric("Units sold / day", f"{top['sold_per_day']:,.1f}", "90-day average")
-        c.metric("Median price", f"${top['median_price']:,.2f}",
-                 f"${top['p25']:,.0f}–${top['p75']:,.0f} typical")
+                 f"{top['sell_through_pct']}% of supply", delta_color="off")
+        b.metric("Sold / day", f"{top['sold_per_day']:,.1f}",
+                 "90-day avg", delta_color="off")
+        c.metric("Median price", f"${top['median_price']:,.0f}",
+                 f"${top['p25']:,.0f}–${top['p75']:,.0f}", delta_color="off")
         d.metric("Competition", f"{top['competition']}/100",
-                 f"{top['active_listings']:,} active listings", delta_color="inverse")
+                 f"{top['active_listings']:,} listings", delta_color="off")
     else:
-        st.info(
-            "Sold-history columns are blank, which means the Marketplace Insights "
-            "calls returned no data for these keywords. Everything below is "
-            "supply-side only — it shows what is listed, not what is selling."
+        # No sold data: show only what is actually measured, instead of a row
+        # of zeroes implying nothing sells in these niches.
+        a, b, c = st.columns(3)
+        a.metric("Largest supply", top["niche"],
+                 f"{top['active_listings']:,} listings", delta_color="off")
+        b.metric("Median price", f"${top['median_price']:,.0f}",
+                 f"${top['p25']:,.0f}–${top['p75']:,.0f}", delta_color="off")
+        c.metric("Competition", f"{top['competition']}/100",
+                 f"{top['unique_sellers']} sellers sampled", delta_color="off")
+        st.caption(
+            "Sold-history columns are empty — Marketplace Insights returned no "
+            "completed sales, so these figures describe supply only, not demand."
         )
 
     # Sorted by whatever the seller is actually deciding on.
@@ -679,7 +691,7 @@ def _render_charts(products: List[Dict[str, Any]], result: Dict[str, Any] = None
     col = metric_label[pick]
 
     ranked = df.sort_values(col, ascending=False, na_position="last")
-    st.bar_chart(ranked.head(10).set_index("niche")[[col]], height=240)
+    st.bar_chart(ranked.head(10).set_index("niche")[[col]], height=200)
 
     display = ranked.copy()
     for money in ("median_price", "p25", "p75"):
@@ -734,13 +746,20 @@ def _render_charts(products: List[Dict[str, Any]], result: Dict[str, Any] = None
         left, right = st.columns([1, 1])
         with left:
             prices = pd.Series(sorted(p["price"] for p in items))
-            # Ten buckets across the observed range shows where supply
-            # actually clusters, which a median alone hides.
             bins = pd.cut(prices, bins=min(10, max(3, len(prices) // 3)))
             hist = prices.groupby(bins, observed=True).count()
-            hist.index = [f"${int(i.left)}–{int(i.right)}" for i in hist.index]
+
+            # st.bar_chart sorts its index as text, so "$9–80" landed after
+            # "$642–712". Carry the numeric lower bound and sort on it.
+            dist = pd.DataFrame({
+                "band": [f"${int(i.left)}–{int(i.right)}" for i in hist.index],
+                "lower": [float(i.left) for i in hist.index],
+                "listings": hist.values,
+            }).sort_values("lower")
+
             st.caption(f"Price distribution — {len(items)} sampled listings")
-            st.bar_chart(hist, height=220)
+            st.bar_chart(dist, x="band", y="listings", height=200,
+                         x_label="", y_label="")
         with right:
             st.caption("Where this niche stands")
             st.write(f"**{row['unique_sellers']}** distinct sellers in the sample; "
@@ -755,7 +774,16 @@ def _render_charts(products: List[Dict[str, Any]], result: Dict[str, Any] = None
         top_sellers = pd.Series([p.get("seller") for p in items if p.get("seller")])
         if not top_sellers.empty:
             st.caption("Sellers holding the most listings in this niche")
-            st.bar_chart(top_sellers.value_counts().head(8), height=200)
+            counts = top_sellers.value_counts().head(8)
+            sellers_df = pd.DataFrame({
+                # Full seller IDs rotated vertically and ate the chart; clip
+                # them so the bars stay readable.
+                "seller": [s if len(s) <= 14 else s[:13] + "\u2026"
+                           for s in counts.index],
+                "listings": counts.values,
+            })
+            st.bar_chart(sellers_df, x="seller", y="listings", height=190,
+                         x_label="", y_label="")
 
 
 def _connected_label(owner_name: str) -> str:

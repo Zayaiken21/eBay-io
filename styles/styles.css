@@ -731,3 +731,59 @@ hr { border-color: var(--border-soft) !important; }
 .stButton > button:not([kind="primary"]) p {
   color: var(--royal-deep) !important;
 }
+
+/* --------------------------------------------------------------------------
+   Data density.
+   Metric tiles were stacking one per row on a phone, so a four-tile summary
+   filled an entire screen. Two across keeps a row of KPIs readable in one
+   glance, and the dataframe/chart chrome is tightened to match.
+   -------------------------------------------------------------------------- */
+@media screen and (max-width: 640px) {
+  [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > [data-testid="stColumn"] {
+    flex: 1 1 calc(50% - 6px) !important;
+    width: calc(50% - 6px) !important;
+    min-width: 0 !important;
+  }
+
+  div[data-testid="stMetric"] {
+    padding: 9px 10px;
+  }
+
+  div[data-testid="stMetricValue"] {
+    font-size: 17px !important;
+    line-height: 1.15 !important;
+  }
+
+  div[data-testid="stMetricLabel"] p {
+    font-size: 11px !important;
+  }
+
+  /* The caption under a metric is context, not a change figure. */
+  div[data-testid="stMetricDelta"] {
+    font-size: 10.5px !important;
+  }
+}
+
+/* Tabular data reads better tight: smaller type, denser rows. */
+[data-testid="stDataFrame"] {
+  font-size: 12.5px;
+}
+
+[data-testid="stDataFrame"] [role="columnheader"] {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted) !important;
+}
+
+/* Section headings sit closer to the content they label. */
+.section-title {
+  margin: 14px 0 6px !important;
+}
+
+[data-testid="stCaptionContainer"] p {
+  font-size: 11.5px !important;
+  color: var(--muted-2) !important;
+  margin-bottom: 2px !important;
+}
