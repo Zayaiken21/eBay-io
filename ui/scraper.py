@@ -588,6 +588,162 @@ def fetch_product_page(url: str, timeout: int = 15, max_retries: int = 4) -> dic
     return {"success": True, "product": product, "note": note, "error": None}
 
 
+def _money(raw, in_cents: bool) -> str:
+    """Shopify .js returns integer cents; .json returns a decimal string."""
+    if raw in (None, ""):
+        return ""
+    if in_cents and isinstance(raw, (int, float)):
+        return f"{int(raw) / 100:.2f}"
+    return _clean_price(str(raw))
+
+
+def _shopify_variants(sp: dict, images: list):
+    """
+    Builds a real variant matrix from Shopify's product payload.
+
+    Returns (options, rows):
+      options -> [{"name": "Size", "values": ["S", "M", "L"]}, ...]
+      rows    -> one dict per purchasable combination, each carrying its own
+                 price, SKU, barcode, weight, availability and image.
+
+    eBay needs a row per combination to publish a multi-variation listing,
+    so flattening to option names alone (what this previously stored) threw
+    away everything the listing actually needs.
+    """
+    raw_options = sp.get("options") or []
+    in_cents = bool(sp.get("_price_in_cents"))
+
+    options = []
+    for o in raw_options:
+        if isinstance(o, dict) and o.get("name"):
+            vals = [str(v) for v in (o.get("values") or []) if str(v).strip()]
+            options.append({"name": str(o["name"]), "values": vals})
+        elif isinstance(o, str) and o.strip():
+            # Some themes serialize options as bare name strings.
+            options.append({"name": o.strip(), "values": []})
+
+    option_names = [o["name"] for o in options]
+    rows, seen_values = [], {n: [] for n in option_names}
+
+    for v in (sp.get("variants") or []):
+        if not isinstance(v, dict):
+            continue
+        combo = {}
+        for i, name in enumerate(option_names, start=1):
+            val = v.get(f"option{i}")
+            if val:
+                combo[name] = str(val)
+                if str(val) not in seen_values[name]:
+                    seen_values[name].append(str(val))
+
+        img = ""
+        fi = v.get("featured_image")
+        if isinstance(fi, dict):
+            img = fi.get("src") or ""
+        elif isinstance(fi, str):
+            img = fi
+        if img and not img.startswith("http"):
+            img = f"https:{img}"
+
+        grams = v.get("grams") or 0
+        rows.append({
+            "id": str(v.get("id") or ""),
+            "title": str(v.get("title") or "").strip(),
+            "options": combo,
+            "price": _money(v.get("price"), in_cents),
+            "compare_at": _money(v.get("compare_at_price"), in_cents),
+            "sku": str(v.get("sku") or "").strip(),
+            "barcode": str(v.get("barcode") or "").strip(),
+            "weight": (f"{grams / 1000:.3f} kg" if grams else ""),
+            "available": bool(v.get("available", True)),
+            "image": img or (images[0] if images else ""),
+        })
+
+    # Prefer the values actually present on variants — an option list can
+    # advertise a value whose combination was deleted.
+    for o in options:
+        if seen_values.get(o["name"]):
+            o["values"] = seen_values[o["name"]]
+
+    # A lone "Default Title" variant means the product has no real options.
+    # Shopify expresses this as an option literally named "Title" whose only
+    # value is "Default Title", so an empty-options check alone misses it.
+    if len(rows) == 1:
+        vals = [str(v).strip().lower() for v in rows[0]["options"].values()]
+        if rows[0]["title"].strip().lower() in ("", "default title") or \
+           all(v in ("", "default title") for v in vals):
+            return [], []
+
+    return options, rows
+
+
+def _jsonld_variants(html: str, images: list):
+    """
+    Builds the same structure from schema.org hasVariant / ProductGroup,
+    which is what WooCommerce, BigCommerce and most custom storefronts
+    publish when they expose variants at all.
+    """
+    group = None
+    for node in _jld_nodes(html):
+        if _is_product_node(node) and node.get("hasVariant"):
+            group = node
+            break
+    if not group:
+        return [], []
+
+    variants = group.get("hasVariant")
+    if isinstance(variants, dict):
+        variants = [variants]
+    if not isinstance(variants, list):
+        return [], []
+
+    axes = group.get("variesBy") or []
+    if isinstance(axes, str):
+        axes = [axes]
+    # variesBy often arrives as schema URLs (…/schema.org/color).
+    axes = [str(a).rstrip("/").split("/")[-1] for a in axes]
+
+    rows, options = [], {}
+    for v in variants:
+        if not isinstance(v, dict):
+            continue
+        combo = {}
+        for axis in (axes or ["color", "size", "material", "pattern"]):
+            val = v.get(axis)
+            if isinstance(val, dict):
+                val = val.get("name") or val.get("value")
+            if val:
+                label = axis.replace("_", " ").title()
+                combo[label] = str(val)
+                options.setdefault(label, [])
+                if str(val) not in options[label]:
+                    options[label].append(str(val))
+        if not combo:
+            continue
+
+        offers = v.get("offers") or {}
+        if isinstance(offers, list):
+            offers = offers[0] if offers else {}
+        img = v.get("image") or ""
+        if isinstance(img, list):
+            img = img[0] if img else ""
+
+        rows.append({
+            "id": str(v.get("productID") or v.get("@id") or ""),
+            "title": str(v.get("name") or "").strip(),
+            "options": combo,
+            "price": _clean_price(str(offers.get("price", ""))) if offers else "",
+            "compare_at": "",
+            "sku": str(v.get("sku") or "").strip(),
+            "barcode": str(v.get("gtin13") or v.get("gtin") or "").strip(),
+            "weight": "",
+            "available": "outofstock" not in str(offers.get("availability", "")).lower(),
+            "image": (img if str(img).startswith("http") else "") or (images[0] if images else ""),
+        })
+
+    return ([{"name": k, "values": vals} for k, vals in options.items()], rows)
+
+
 def _product_from_shopify_json(sp: dict, url: str, domain: str) -> dict:
     """Builds our standard product dict directly from Shopify's clean .json endpoint response."""
     variants = sp.get("variants") or []
@@ -619,6 +775,7 @@ def _product_from_shopify_json(sp: dict, url: str, domain: str) -> dict:
 
     options = sp.get("options") or []
     variant_labels = [o.get("name", "") for o in options if isinstance(o, dict) and o.get("name")]
+    variant_options, variant_rows = _shopify_variants(sp, images)
 
     specs = {}
     if sp.get("product_type"):
@@ -641,6 +798,8 @@ def _product_from_shopify_json(sp: dict, url: str, domain: str) -> dict:
         "weight": (f"{chosen.get('grams', 0)/1000:.2f} kg" if chosen and chosen.get("grams") else ""),
         "dimensions": "",
         "variants": variant_labels,
+        "variant_options": variant_options,
+        "variant_matrix": variant_rows,
         "tags": _tags(sp.get("title", ""), [], sp.get("product_type", ""), sp.get("vendor", "")),
         "confidence": "high",
     }
@@ -727,7 +886,12 @@ def _extract_all(soup, html: str, url: str, domain: str, rules: dict, island_fie
     p["sku"]           = _sku(soup, html) or _island_str(island_fields, ["sku", "id", "productId"])
     p["weight"]        = _spec_val(p["specifications"], ["weight","item weight","net weight","shipping weight"])
     p["dimensions"]    = _spec_val(p["specifications"], ["dimensions","size","item dimensions","product dimensions","package dimensions"])
-    p["variants"]      = []
+    # Variants from schema.org hasVariant / ProductGroup. Previously this was
+    # hardcoded empty, so size and colour never reached the listing.
+    _v_options, _v_rows = _jsonld_variants(html, p.get("images") or [])
+    p["variants"]        = [o["name"] for o in _v_options]
+    p["variant_options"] = _v_options
+    p["variant_matrix"]  = _v_rows
     p["tags"]          = _tags(p["title"], p["features"], p["category"], p["brand"])
     p["confidence"]    = _confidence(p)
     return p

@@ -458,8 +458,12 @@ def render_dashboard() -> None:
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="control-panel">', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([3, 1, 1])
+    # A raw <div> opened here and closed in a later st.markdown does not wrap
+    # the widgets between them — Streamlit puts every markdown call in its own
+    # container, so the two halves rendered as empty styled bars above and
+    # below the controls. st.container(border=True) is the real wrapper.
+    panel = st.container(border=True)
+    c1, c2, c3 = panel.columns([3, 1, 1])
     with c1:
         keyword_text = st.text_input(
             "Market keywords",
@@ -473,7 +477,6 @@ def render_dashboard() -> None:
             _fetch_market_products.clear()
             st.session_state["dashboard_market_page"] = 1
             st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
     reset_key = _start_of_today_est().strftime("%Y-%m-%d")
     with st.spinner("Scanning live eBay marketplace products..."):
