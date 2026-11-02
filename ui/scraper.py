@@ -648,6 +648,65 @@ def _product_from_shopify_json(sp: dict, url: str, domain: str) -> dict:
 
 
 
+def parse_product_html(html: str, url: str = "") -> dict:
+    """
+    Runs the full extraction pipeline on HTML you already have, with no
+    network request at all.
+
+    This is the way into sites behind enterprise bot management (Walmart,
+    Home Depot, Amazon, Target). Those blocks defeat a page fetch, not a
+    parser — once a real browser has loaded the page and the seller copies
+    the source, every JSON-LD block, Open Graph tag, data island and site
+    selector rule is sitting right there in the markup. Identical output to
+    an automatic import, including confidence scoring.
+    """
+    if not BS4:
+        return _err("BeautifulSoup not installed. Run: pip install beautifulsoup4 lxml")
+    if not html or not html.strip():
+        return _err("No HTML provided. Copy the page source and paste it in.")
+
+    # A seller may paste rendered text instead of source; that has no tags
+    # for the extractor to work with, so say so plainly rather than
+    # returning an empty product.
+    if "<" not in html or not re.search(r'<\s*(html|head|body|div|script|meta)', html, re.I):
+        return _err(
+            "That doesn't look like page source — no HTML tags found. Use your "
+            "browser's View Source (or Developer Tools → Elements → copy the "
+            "<html> element) and paste the markup."
+        )
+
+    domain = get_domain(url) if url else ""
+    if not domain:
+        # Recover the canonical URL from the markup when no URL was given.
+        m = re.search(r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)', html, re.I)
+        if not m:
+            m = re.search(r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)', html, re.I)
+        if m:
+            url = m.group(1)
+            domain = get_domain(url)
+
+    soup = BeautifulSoup(html, "lxml" if _lxml() else "html.parser")
+    rules = _rules_for(domain)
+    island_fields = _fields_from_data_islands(html)
+    product = _extract_all(soup, html, url, domain, rules, island_fields)
+    _fill_defaults(product)
+    product["source"] = "pasted_html"
+
+    if not product.get("title"):
+        return _err(
+            "Parsed the markup but found no product title. Make sure you copied "
+            "the whole page source from the product page itself."
+        )
+
+    found = [k for k in ("price", "brand", "description", "images") if product.get(k)]
+    note = (
+        f"Parsed directly from pasted page source — recovered "
+        f"{', '.join(found) if found else 'title only'}. No fetch needed, so "
+        f"site bot protection is not a factor."
+    )
+    return {"success": True, "product": product, "note": note, "error": None}
+
+
 def _extract_all(soup, html: str, url: str, domain: str, rules: dict, island_fields: dict = None) -> dict:
     island_fields = island_fields or {}
     p = {}

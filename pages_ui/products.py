@@ -18,7 +18,7 @@ import re
 import streamlit as st
 import streamlit.components.v1 as components
 
-from ui.scraper         import fetch_product_page
+from ui.scraper         import fetch_product_page, parse_product_html
 from ui.ai_rewriter     import rewrite_title, rewrite_description, generate_tags, auto_seo_optimize
 from ui.ebay_formatter  import generate_ebay_html, generate_ebay_export
 from ui.ebay_uploader   import upload_to_ebay, get_seller_policies, get_account_info, suggest_categories
@@ -504,6 +504,52 @@ below and we'll still auto-apply SEO optimization, image handling, and
 eBay formatting exactly like an automatic import.
 </p>
 </div>""", unsafe_allow_html=True)
+
+    # ── Paste page source ──────────────────────────────────────────────
+    # The block stops a fetch, not the parser. If the seller opens the page
+    # in their own browser (passing the challenge as a human) and copies the
+    # source, the full extraction pipeline runs on it normally.
+    with st.expander("⚡ Faster: paste the page source and auto-extract", expanded=True):
+        st.markdown(
+            "<p style='color:#744210;font-size:13px;line-height:1.55;'>"
+            "Open the product page in your browser, view the page source, select all, "
+            "and paste it below. Everything is pulled out automatically — title, price, "
+            "brand, description and image URLs — exactly like a normal import.<br>"
+            "<b>iPhone:</b> Safari can't view source directly, so use the Shortcuts app "
+            "or open the page in a desktop browser.<br>"
+            "<b>Desktop:</b> Ctrl+U (Cmd+Option+U on Mac) → Ctrl+A → Ctrl+C."
+            "</p>",
+            unsafe_allow_html=True,
+        )
+        pasted = st.text_area(
+            "Page source",
+            height=130,
+            key="manual_pasted_html",
+            placeholder="<!DOCTYPE html><html> ... paste the whole page source here ...",
+            label_visibility="collapsed",
+        )
+        if st.button("⚡ Extract from pasted source", type="primary", key="parse_pasted"):
+            if not pasted.strip():
+                st.warning("Paste the page source first.")
+            else:
+                with st.spinner("Parsing pasted source..."):
+                    res = parse_product_html(pasted, src_url)
+                if not res["success"]:
+                    st.error(f"❌ {res['error']}")
+                else:
+                    prod = res["product"]
+                    with st.spinner("Auto-optimizing title, description & tags..."):
+                        prod = auto_seo_optimize(prod)
+                        prod["seo_auto_applied"] = True
+                    st.session_state.import_result = prod
+                    st.session_state.bot_wall_blocked = False
+                    st.success(f"✅ {res['note']}")
+                    st.rerun()
+
+    st.markdown(
+        "<p class='sec-hdr'><span class='sec-hdr-icon'>✍️</span>Or enter the details by hand</p>",
+        unsafe_allow_html=True,
+    )
 
     with st.form("manual_entry_form", clear_on_submit=False):
         st.text_input("Source URL (for reference)", value=src_url, disabled=True)
