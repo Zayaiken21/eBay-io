@@ -113,6 +113,20 @@ def _response_to_json(resp: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str
 
 
 def _api_get(owner_name: str, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    # Marketplace Insights is an application-level API and rejects the user
+    # token that call_ebay_api sends. Reconnecting the account could never fix
+    # it; the call needs a client-credentials token carrying the Insights
+    # scope, which is a different grant entirely.
+    if "marketplace_insights" in endpoint:
+        try:
+            from core.ebay_oauth import call_ebay_app_api
+        except Exception as exc:
+            return None, f"application-token helper unavailable: {exc}"
+        try:
+            return _response_to_json(call_ebay_app_api(endpoint, params or {}))
+        except Exception as exc:
+            return None, str(exc)
+
     if call_ebay_api is None:
         return None, "call_ebay_api is not available."
 
@@ -123,13 +137,50 @@ def _api_get(owner_name: str, endpoint: str, params: Optional[Dict[str, Any]] = 
         return None, str(exc)
 
 
+# Rendered when a listing genuinely has no image. The previous fallback was a
+# hardcoded ir.ebaystatic.com placeholder that no longer resolves, so missing
+# images showed the browser's broken-image icon. An inline SVG always renders.
+_NO_IMAGE = (
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
+    "viewBox='0 0 160 120'%3E%3Crect width='160' height='120' fill='%23f1f5f9'/%3E"
+    "%3Ctext x='80' y='64' font-family='sans-serif' font-size='11' fill='%2394a3b8' "
+    "text-anchor='middle'%3ENo image%3C/text%3E%3C/svg%3E"
+)
+
+
+def _first_image_url(entries: Any) -> str:
+    """First usable imageUrl from a Browse image list, tolerating [] and None."""
+    if isinstance(entries, dict):
+        entries = [entries]
+    if not isinstance(entries, list):
+        return ""
+    for entry in entries:
+        if isinstance(entry, dict) and entry.get("imageUrl"):
+            return str(entry["imageUrl"])
+        if isinstance(entry, str) and entry:
+            return entry
+    return ""
+
+
 def _item_image(item: Dict[str, Any]) -> str:
-    image = item.get("image") or {}
-    return (
-        image.get("imageUrl")
-        or item.get("thumbnailImages", [{}])[0].get("imageUrl")
-        or "https://ir.ebaystatic.com/cr/v/c01/skin/image-placeholder.png"
+    """
+    Browse does not return `image` on every summary — some listings only carry
+    thumbnailImages, and a few only additionalImages. Indexing
+    thumbnailImages[0] directly also raised IndexError when the key was
+    present but empty.
+    """
+    url = (
+        _first_image_url(item.get("image"))
+        or _first_image_url(item.get("thumbnailImages"))
+        or _first_image_url(item.get("additionalImages"))
     )
+    if not url:
+        return _NO_IMAGE
+    if url.startswith("//"):
+        url = f"https:{url}"
+    # eBay serves s-l225 thumbs in search results; request a larger rendition
+    # so the card image is not upscaled and blurry.
+    return re.sub(r"/s-l\d+\.", "/s-l500.", url)
 
 
 def _item_price(item: Dict[str, Any]) -> float:

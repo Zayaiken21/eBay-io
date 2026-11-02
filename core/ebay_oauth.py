@@ -17,11 +17,13 @@ DEFAULT_SCOPES = [
     "https://api.ebay.com/oauth/api_scope/sell.inventory",
     "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
     "https://api.ebay.com/oauth/api_scope/sell.marketing",
-    # Required for /buy/marketplace_insights (sold-history data). Without it
-    # the token cannot call Insights at all, so every sold figure came back
-    # zero no matter what access the eBay app itself had granted.
-    "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights",
 ]
+
+# Marketplace Insights is an application-level API: it accepts a token from
+# the client-credentials grant, not the user authorization-code grant. Putting
+# this scope in DEFAULT_SCOPES above does nothing for it and risks eBay
+# rejecting the consent screen, so it is requested separately below.
+INSIGHTS_SCOPE = "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights"
 
 
 def get_oauth_scopes() -> list[str]:
@@ -230,3 +232,73 @@ def handle_oauth_callback(code: str, state: str) -> dict[str, Any]:
         "token_data": token_data,
         "ebay_user": profile,
     }
+
+
+# ── Application (client-credentials) token ────────────────────────────────────
+# Marketplace Insights and the public Browse endpoints accept an application
+# token rather than a user token. Cached in-process until shortly before
+# expiry, since eBay rate-limits token issuance.
+_APP_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
+
+
+def get_app_access_token(environment: str | None = None,
+                         scopes: list[str] | None = None) -> str:
+    """
+    Returns an application access token via the client-credentials grant.
+
+    Raises RuntimeError with eBay's own response text on failure, so a missing
+    Insights subscription reports what eBay actually said instead of being
+    reported as "no sold data".
+    """
+    environment = (environment or "production").lower()
+    scopes = scopes or [INSIGHTS_SCOPE]
+    cache_key = f"{environment}|{' '.join(sorted(scopes))}"
+
+    cached = _APP_TOKEN_CACHE.get(cache_key)
+    if cached and cached[1] > time.time() + 60:
+        return cached[0]
+
+    config = get_ebay_config(environment)
+    response = requests.post(
+        config["token_url"],
+        headers=_basic_auth_header(environment),
+        data={"grant_type": "client_credentials", "scope": " ".join(scopes)},
+        timeout=30,
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"eBay application-token request failed: "
+            f"{response.status_code} {response.text}"
+        )
+
+    payload = response.json()
+    token = payload.get("access_token")
+    if not token:
+        raise RuntimeError(f"eBay returned no access_token: {payload}")
+
+    _APP_TOKEN_CACHE[cache_key] = (
+        token, time.time() + int(payload.get("expires_in", 7200))
+    )
+    return token
+
+
+def call_ebay_app_api(endpoint: str, params: dict | None = None,
+                      environment: str | None = None,
+                      marketplace_id: str = "EBAY_US",
+                      scopes: list[str] | None = None):
+    """GET an application-token endpoint (Marketplace Insights, Browse)."""
+    environment = (environment or "production").lower()
+    config = get_ebay_config(environment)
+    token = get_app_access_token(environment, scopes)
+
+    return requests.get(
+        endpoint if endpoint.startswith("http") else f"{config['api_base']}{endpoint}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": marketplace_id,
+        },
+        params=params or {},
+        timeout=45,
+    )
