@@ -359,8 +359,12 @@ then automatically applies SEO optimization. No extra steps needed.</p>
     elif go:
         st.warning("Paste a product URL above first.")
 
-    if st.session_state.import_result:
-        _show_import_result(st.session_state.import_result)
+    # .get() rather than attribute access: Streamlit raises AttributeError
+    # for a missing key instead of returning None, so any code path that
+    # clears this by deletion would crash the whole page.
+    imported = st.session_state.get("import_result")
+    if imported:
+        _show_import_result(imported)
 
     if st.session_state.get("bot_wall_blocked"):
         _show_manual_entry_form()
