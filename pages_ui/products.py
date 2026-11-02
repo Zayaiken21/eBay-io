@@ -242,7 +242,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r16 · 2026-11-02"
+APP_BUILD = "r17 · 2026-11-02"
 
 
 def _account_banner():
@@ -566,23 +566,30 @@ def _capture_panel(src_url: str = "") -> None:
     with st.expander("Set up one-tap capture", expanded=False):
         token = capture_token(owner)
         st.markdown(
-            f"""
-**Desktop** — drag this to your bookmarks bar, or make a new bookmark and paste
-the code below as its address. Then click it on any product page.
+            """
+**You only do this once.** Copy the line below — that is the whole setup.
+Everything it needs is already built in, so there is nothing for you to fill
+in or look up.
 
-**iPhone** — bookmark any page in Safari, edit the bookmark, and replace its
-address with the code below. Or build a Shortcut using *Run JavaScript on Web
-Page* that posts the same payload.
+**On your iPhone**
+1. In Safari, bookmark any page (tap Share → Add Bookmark). Name it **eBay io**.
+2. Tap the bookmarks icon, then Edit, and tap that bookmark.
+3. Delete whatever is in the address line and paste the copied line in its place. Save.
 
-A capture is claimed and deleted the moment you import it, and anything left
-unclaimed is discarded after {CAPTURE_TTL_MINUTES} minutes.
+**On a computer**
+Make a new bookmark named **eBay io** and paste the copied line as its address.
+
+**Then, any time you find a product:** open it, tap your **eBay io** bookmark,
+come back here and press **Import capture**.
 """
         )
         st.code(build_bookmarklet(owner, token), language="javascript")
         st.caption(
-            "This captures the page you are already looking at, in your own "
-            "browser session. It does not automate or bypass anything on the "
-            "site — which is why it keeps working where a server fetch cannot."
+            f"The page you capture is deleted as soon as you import it, and "
+            f"anything you never import is thrown away after "
+            f"{CAPTURE_TTL_MINUTES} minutes. It reads the page you are already "
+            f"looking at in your own browser — it does not get around anything "
+            f"on the site, which is why it keeps working."
         )
 
 
