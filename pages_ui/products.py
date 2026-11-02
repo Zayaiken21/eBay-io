@@ -239,7 +239,14 @@ def _hero(total_drafts: int):
 </div>""", unsafe_allow_html=True)
 
 
+# Bump on every deploy. Rendered in the account banner so a stale process is
+# immediately visible: if the badge below does not match the latest commit,
+# the running app is not the code in the repo.
+APP_BUILD = "r5 · 2026-11-02"
+
+
 def _account_banner():
+    st.caption(f"build {APP_BUILD}")
     try:
         info = get_account_info()
     except Exception as e:
