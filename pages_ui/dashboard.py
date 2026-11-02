@@ -691,7 +691,40 @@ def _render_charts(products: List[Dict[str, Any]], result: Dict[str, Any] = None
     col = metric_label[pick]
 
     ranked = df.sort_values(col, ascending=False, na_position="last")
-    st.bar_chart(ranked.head(10).set_index("niche")[[col]], height=200)
+    chart_df = ranked.head(10)[["niche", col]].copy()
+
+    # Active-listing counts span orders of magnitude (9.4M pokemon cards
+    # against 14k blenders), so a linear axis renders every other bar as a
+    # hairline. Horizontal bars on a log axis keep all ten readable and put
+    # the niche names on the axis instead of rotated vertically.
+    values = chart_df[col].dropna()
+    needs_log = (
+        len(values) > 1 and values.min() > 0
+        and values.max() / max(values.min(), 1) > 50
+    )
+    try:
+        import altair as alt
+
+        scale = alt.Scale(type="log") if needs_log else alt.Scale(type="linear")
+        chart = (
+            alt.Chart(chart_df)
+            .mark_bar(cornerRadiusEnd=3, color="#2457ff")
+            .encode(
+                x=alt.X(f"{col}:Q", scale=scale,
+                        title=f"{pick} (log scale)" if needs_log else pick),
+                y=alt.Y("niche:N", sort="-x", title=None),
+                tooltip=["niche", col],
+            )
+            .properties(height=max(150, 26 * len(chart_df)))
+        )
+        st.altair_chart(chart, use_container_width=True)
+        if needs_log:
+            st.caption(
+                "Log scale — these niches differ by orders of magnitude, so a "
+                "linear axis would hide everything but the largest."
+            )
+    except Exception:
+        st.bar_chart(chart_df.set_index("niche")[[col]], height=200)
 
     display = ranked.copy()
     for money in ("median_price", "p25", "p75"):
@@ -762,14 +795,44 @@ def _render_charts(products: List[Dict[str, Any]], result: Dict[str, Any] = None
                          x_label="", y_label="")
         with right:
             st.caption("Where this niche stands")
-            st.write(f"**{row['unique_sellers']}** distinct sellers in the sample; "
-                     f"the largest holds **{row['top_seller_share_pct']}%**.")
-            st.write(f"**{row['new_condition_pct']}%** listed as new, "
-                     f"**{row['free_shipping_pct']}%** with free shipping.")
+
+            # Proportions read far faster as filled bars than as sentences,
+            # and a bar makes "11% of listings" instantly comparable against
+            # the other rows. Values stay on the label so nothing is lost.
+            def _meter(label: str, pct: float, hint: str = "") -> str:
+                pct = max(0.0, min(100.0, float(pct or 0)))
+                return (
+                    f'<div class="meter-row">'
+                    f'<div class="meter-head"><span>{escape(label)}</span>'
+                    f'<b>{pct:g}%</b></div>'
+                    f'<div class="meter-track">'
+                    f'<div class="meter-fill" style="width:{pct}%"></div></div>'
+                    + (f'<small>{escape(hint)}</small>' if hint else "")
+                    + '</div>'
+                )
+
+            blocks = [
+                f'<div class="stat-grid">'
+                f'<div class="stat"><small>Sellers</small>'
+                f'<b>{row["unique_sellers"]}</b></div>'
+                f'<div class="stat"><small>Active listings</small>'
+                f'<b>{row["active_listings"]:,}</b></div>'
+                f'<div class="stat"><small>Median</small>'
+                f'<b>${row["median_price"]:,.0f}</b></div>'
+                f'<div class="stat"><small>Typical range</small>'
+                f'<b>${row["p25"]:,.0f}–${row["p75"]:,.0f}</b></div>'
+                f'</div>',
+                _meter("Listed as new", row["new_condition_pct"]),
+                _meter("Free shipping", row["free_shipping_pct"]),
+                _meter("Largest seller's share", row["top_seller_share_pct"],
+                       "Lower means supply is spread across many sellers"),
+            ]
             if pd.notna(row["sell_through_pct"]):
-                st.write(f"**{row['sold_90d']:,}** sold in 90 days against "
-                         f"**{row['active_listings']:,}** active listings "
-                         f"(**{row['sell_through_pct']}%** sell-through).")
+                blocks.append(_meter(
+                    "Sell-through (90d)", row["sell_through_pct"],
+                    f'{row["sold_90d"]:,} sold vs {row["active_listings"]:,} active'))
+
+            st.markdown("".join(blocks), unsafe_allow_html=True)
 
         top_sellers = pd.Series([p.get("seller") for p in items if p.get("seller")])
         if not top_sellers.empty:

@@ -257,3 +257,77 @@
 @media screen and (max-width: 430px) {
   .trend-card { flex-basis: 84vw; }
 }
+
+/* --------------------------------------------------------------------------
+   Niche statistics.
+   Proportions were written as sentences ("50.0% listed as new, 85.0% with
+   free shipping"), which forces the reader to hold numbers in their head to
+   compare them. Filled meters make the comparison immediate.
+   -------------------------------------------------------------------------- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.stat {
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+}
+
+.stat small {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-2);
+  margin-bottom: 2px;
+}
+
+.stat b {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--royal-ink);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.meter-row { margin-bottom: 10px; }
+
+.meter-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.meter-head b {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--royal-ink);
+}
+
+.meter-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.07);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--royal-blue), #4aa6e8);
+}
+
+.meter-row small {
+  display: block;
+  font-size: 10.5px;
+  color: var(--muted-2);
+  margin-top: 3px;
+}
