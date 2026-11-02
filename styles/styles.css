@@ -114,7 +114,10 @@ body,
 }
 
 .stApp {
-  background: linear-gradient(180deg, #f6f8fc 0%, #eef2f8 100%);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(36, 87, 255, 0.30), transparent 32%),
+    radial-gradient(circle at 92% 0%, rgba(146, 255, 24, 0.28), transparent 34%),
+    linear-gradient(180deg, #eef3fa 0%, var(--bg-main) 45%, var(--bg-deep) 100%);
   background-attachment: fixed;
   color: var(--text);
 }
@@ -337,10 +340,15 @@ select {
   padding: 10px 14px;
   margin-bottom: 10px;
   border-radius: var(--r-md);
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid var(--border);
-  backdrop-filter: blur(12px);
-  box-shadow: var(--shadow-sm);
+  background:
+    linear-gradient(135deg,
+      rgba(36, 87, 255, 0.24),
+      rgba(146, 255, 24, 0.38),
+      rgba(215, 255, 63, 0.30)),
+    rgba(255, 255, 255, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-md);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -352,7 +360,7 @@ select {
   font-weight: 800;
   letter-spacing: -0.3px;
   line-height: 1;
-  color: var(--royal-ink);
+  color: var(--royal-blue);
 }
 
 .top-nav-brand .bolt { margin-left: 6px; }

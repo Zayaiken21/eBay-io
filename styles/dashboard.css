@@ -65,12 +65,16 @@
   overflow-wrap: anywhere;
 }
 
-.control-panel {
-  padding: 13px;
-  border-radius: var(--r-lg);
-  background: var(--bg-sunken);
-  border: 1px solid var(--border-soft);
-  margin-bottom: 12px;
+/* Streamlit's st.container(border=True), used for the scan controls. */
+[data-testid="stVerticalBlockBorderWrapper"] {
+  border-radius: var(--r-lg) !important;
+  border: 1px solid var(--border) !important;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+[data-testid="stVerticalBlockBorderWrapper"] > div {
+  padding: 2px;
 }
 
 .freshness {
