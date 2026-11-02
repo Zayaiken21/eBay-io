@@ -54,8 +54,29 @@ def _supabase_key() -> str:
     )
 
 
+def _publishable_key() -> str:
+    """
+    The anon/publishable key — the ONLY key that may appear in a bookmarklet.
+
+    A bookmarklet is readable by anyone who can see the bookmark, so it can
+    only ever carry the public key, whose reach is bounded by row-level
+    security (insert-only on this table). The service-role key bypasses RLS
+    entirely and grants full access to every table, so it must never leave
+    the server.
+    """
+    return str(
+        st.secrets.get("SUPABASE_ANON_KEY")
+        or st.secrets.get("SUPABASE_PUBLISHABLE_KEY")
+        or ""
+    )
+
+
 def is_configured() -> bool:
     return bool(_supabase_url() and _supabase_key())
+
+
+def can_build_bookmarklet() -> bool:
+    return bool(_supabase_url() and _publishable_key())
 
 
 def _headers(prefer: str | None = None) -> dict[str, str]:
@@ -179,7 +200,23 @@ def build_bookmarklet(owner: str, token: str) -> str:
     session they opened themselves — no automation of the site is involved.
     """
     url = _supabase_url()
-    key = _supabase_key()
+    key = _publishable_key()
+
+    # Hard stop. Earlier this fell back to _supabase_key(), which returns the
+    # service-role key — embedding full, RLS-bypassing database access in a
+    # bookmark. Refuse to emit anything rather than ever do that again.
+    if not key:
+        raise RuntimeError(
+            "No SUPABASE_ANON_KEY in secrets. The bookmarklet can only carry "
+            "the publishable key; the service-role key must never be put in "
+            "one, since it bypasses row-level security."
+        )
+    if "service_role" in key:
+        raise RuntimeError(
+            "SUPABASE_ANON_KEY holds a service-role key. Use the anon / "
+            "publishable key instead."
+        )
+
     return (
         "javascript:(function(){"
         "try{"

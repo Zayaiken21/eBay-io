@@ -245,7 +245,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r18 · 2026-11-02"
+APP_BUILD = "r19 · 2026-11-02"
 
 
 def _account_banner():
@@ -590,7 +590,15 @@ Make a new bookmark named **eBay io** and paste the copied line as its address.
 come back here and press **Import capture**.
 """
         )
-        st.code(build_bookmarklet(owner, token), language="javascript")
+        try:
+            st.code(build_bookmarklet(owner, token), language="javascript")
+        except RuntimeError as exc:
+            st.error(
+                f"⚠️ {exc}\n\nAdd **SUPABASE_ANON_KEY** to your Streamlit "
+                f"secrets (Supabase → Project Settings → API → anon public). "
+                f"Until then, use the paste box above."
+            )
+            return
         st.caption(
             f"The page you capture is deleted as soon as you import it, and "
             f"anything you never import is thrown away after "
