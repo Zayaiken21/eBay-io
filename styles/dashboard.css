@@ -331,3 +331,61 @@
   color: var(--muted-2);
   margin-top: 3px;
 }
+
+/* --------------------------------------------------------------------------
+   KPI row.
+   Replaces st.metric for the summary tiles: delta_color="off" greys the
+   caption but still renders an up-arrow beside it, which reads as growth on
+   a figure that has not moved.
+   -------------------------------------------------------------------------- */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.kpi {
+  padding: 10px 12px;
+  border-radius: var(--r-lg);
+  background: #fff;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  min-width: 0;
+}
+
+.kpi small {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-2);
+  margin-bottom: 3px;
+}
+
+.kpi b {
+  display: block;
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--royal-ink);
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+}
+
+.kpi span {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted-2);
+}
+
+@media screen and (max-width: 640px) {
+  .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi b { font-size: 16px; }
+}
+
+/* Column-group selector sits tight under the ranking controls. */
+[data-testid="stRadio"] [role="radiogroup"] {
+  gap: 6px !important;
+  flex-wrap: wrap;
+}

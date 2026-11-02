@@ -648,29 +648,40 @@ def _render_charts(products: List[Dict[str, Any]], result: Dict[str, Any] = None
     st.markdown("<div class='section-title'>Niche Comparison</div>", unsafe_allow_html=True)
 
     top = df.iloc[0]
-    # delta_color="off" throughout: these captions are context, not movement.
-    # Rendered as deltas they drew green up-arrows on figures that had not
-    # risen — including "0.0% of active supply".
+
+    # Built as markup rather than st.metric. delta_color="off" only greys the
+    # delta — Streamlit still draws an up-arrow beside it, which reads as
+    # growth on figures that have not moved, "0.0% of supply" included.
+    def _kpi(label: str, value: str, hint: str) -> str:
+        return (f'<div class="kpi"><small>{escape(label)}</small>'
+                f'<b>{escape(value)}</b><span>{escape(hint)}</span></div>')
+
     if has_sold:
-        a, b, c, d = st.columns(4)
-        a.metric("Best sell-through", top["niche"],
-                 f"{top['sell_through_pct']}% of supply", delta_color="off")
-        b.metric("Sold / day", f"{top['sold_per_day']:,.1f}",
-                 "90-day avg", delta_color="off")
-        c.metric("Median price", f"${top['median_price']:,.0f}",
-                 f"${top['p25']:,.0f}–${top['p75']:,.0f}", delta_color="off")
-        d.metric("Competition", f"{top['competition']}/100",
-                 f"{top['active_listings']:,} listings", delta_color="off")
+        tiles = [
+            _kpi("Best sell-through", str(top["niche"]),
+                 f"{top['sell_through_pct']}% of supply"),
+            _kpi("Sold / day", f"{top['sold_per_day']:,.1f}", "90-day avg"),
+            _kpi("Median price", f"${top['median_price']:,.0f}",
+                 f"${top['p25']:,.0f}–${top['p75']:,.0f} typical"),
+            _kpi("Competition", f"{top['competition']}/100",
+                 f"{top['active_listings']:,} listings"),
+        ]
     else:
-        # No sold data: show only what is actually measured, instead of a row
-        # of zeroes implying nothing sells in these niches.
-        a, b, c = st.columns(3)
-        a.metric("Largest supply", top["niche"],
-                 f"{top['active_listings']:,} listings", delta_color="off")
-        b.metric("Median price", f"${top['median_price']:,.0f}",
-                 f"${top['p25']:,.0f}–${top['p75']:,.0f}", delta_color="off")
-        c.metric("Competition", f"{top['competition']}/100",
-                 f"{top['unique_sellers']} sellers sampled", delta_color="off")
+        # No sold data: show only what is measured, rather than a row of
+        # zeroes implying nothing sells in these niches.
+        tiles = [
+            _kpi("Largest supply", str(top["niche"]),
+                 f"{top['active_listings']:,} listings"),
+            _kpi("Median price", f"${top['median_price']:,.0f}",
+                 f"${top['p25']:,.0f}–${top['p75']:,.0f} typical"),
+            _kpi("Competition", f"{top['competition']}/100",
+                 f"{top['unique_sellers']} sellers sampled"),
+        ]
+
+    st.markdown(f'<div class="kpi-row">{"".join(tiles)}</div>',
+                unsafe_allow_html=True)
+
+    if not has_sold:
         st.caption(
             "Sold-history columns are empty — Marketplace Insights returned no "
             "completed sales, so these figures describe supply only, not demand."
@@ -687,8 +698,38 @@ def _render_charts(products: List[Dict[str, Any]], result: Dict[str, Any] = None
     }
     choices = [k for k, v in metric_label.items()
                if has_sold or v not in ("sell_through_pct", "sold_90d", "sold_24h")]
-    pick = st.selectbox("Rank niches by", choices, index=0)
+
+    ctl1, ctl2 = st.columns([1, 1])
+    with ctl1:
+        pick = st.selectbox("Rank niches by", choices, index=0)
+    with ctl2:
+        # Without this the table always showed every niche in a fixed order,
+        # so comparing two of them meant scanning past the rest.
+        shown = st.multiselect(
+            "Niches shown", list(df["niche"]), default=list(df["niche"]),
+            help="Narrow the chart and table to the niches you are comparing.",
+        )
+    if shown:
+        df = df[df["niche"].isin(shown)].reset_index(drop=True)
+    if df.empty:
+        st.caption("No niches selected.")
+        return
+
     col = metric_label[pick]
+
+    # Column groups, so the table shows what is being decided on rather than
+    # every statistic at once.
+    GROUPS = {
+        "Demand": ["niche", "sold_24h", "sold_90d", "sell_through_pct", "sold_per_day"],
+        "Pricing": ["niche", "median_price", "p25", "p75", "spread_pct"],
+        "Competition": ["niche", "active_listings", "unique_sellers",
+                        "top_seller_share_pct", "competition"],
+        "Listing quality": ["niche", "new_condition_pct", "free_shipping_pct",
+                            "avg_seller_feedback"],
+    }
+    group_names = [g for g in GROUPS if has_sold or g != "Demand"]
+    group = st.radio("Columns", ["All"] + group_names,
+                     horizontal=True, label_visibility="collapsed")
 
     ranked = df.sort_values(col, ascending=False, na_position="last")
     chart_df = ranked.head(10)[["niche", col]].copy()
@@ -734,6 +775,10 @@ def _render_charts(products: List[Dict[str, Any]], result: Dict[str, Any] = None
         display[pct] = display[pct].map(
             lambda x: f"{x}%" if pd.notna(x) else "—")
     display["active_listings"] = display["active_listings"].map(lambda x: f"{x:,}")
+
+    if group != "All":
+        keep = [c for c in GROUPS[group] if c in display.columns]
+        display = display[keep]
 
     st.dataframe(
         display,
@@ -791,8 +836,29 @@ def _render_charts(products: List[Dict[str, Any]], result: Dict[str, Any] = None
             }).sort_values("lower")
 
             st.caption(f"Price distribution — {len(items)} sampled listings")
-            st.bar_chart(dist, x="band", y="listings", height=200,
-                         x_label="", y_label="")
+            # Drawn with altair rather than st.bar_chart: the built-in chart
+            # was falling back to a raw table with an index column, and it
+            # cannot hold the bands in numeric order without this.
+            try:
+                import altair as alt
+
+                order = list(dist["band"])
+                st.altair_chart(
+                    alt.Chart(dist)
+                    .mark_bar(cornerRadiusEnd=3, color="#2457ff")
+                    .encode(
+                        x=alt.X("band:N", sort=order, title=None,
+                                axis=alt.Axis(labelAngle=-40, labelFontSize=10)),
+                        y=alt.Y("listings:Q", title=None,
+                                axis=alt.Axis(labelFontSize=10, tickMinStep=1)),
+                        tooltip=[alt.Tooltip("band:N", title="Price"),
+                                 alt.Tooltip("listings:Q", title="Listings")],
+                    )
+                    .properties(height=190),
+                    use_container_width=True,
+                )
+            except Exception:
+                st.bar_chart(dist.set_index("band")[["listings"]], height=190)
         with right:
             st.caption("Where this niche stands")
 
