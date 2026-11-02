@@ -181,6 +181,44 @@ def _normalize_active_items(data: Dict[str, Any], keyword: str) -> List[Dict[str
     return products
 
 
+_STOPWORDS = {
+    "the", "and", "for", "with", "new", "free", "set", "pack", "size",
+    "pcs", "pc", "lot", "kit", "usa", "ship", "shipping", "inch", "in",
+}
+
+
+def _title_tokens(title: str) -> set:
+    """Significant lowercase tokens, used to match sold items to active ones."""
+    words = re.findall(r"[a-z0-9]+", str(title).lower())
+    return {w for w in words if len(w) > 2 and w not in _STOPWORDS}
+
+
+def _match_sold(title: str, sales: Dict[str, Dict[str, Any]]) -> int:
+    """
+    Sold quantity for the best-matching sold listing.
+
+    eBay titles for the same product vary by seller, so an exact string
+    comparison finds almost nothing. Jaccard overlap over significant
+    tokens, with a conservative threshold, matches real pairs without
+    collapsing distinct products together.
+    """
+    want = _title_tokens(title)
+    if not want:
+        return 0
+
+    best, best_score = 0, 0.0
+    for entry in sales.values():
+        have = entry.get("_tokens") or set()
+        if not have:
+            continue
+        union = want | have
+        score = len(want & have) / len(union) if union else 0.0
+        if score > best_score:
+            best_score, best = score, entry.get("sold_count", 0)
+
+    return best if best_score >= 0.45 else 0
+
+
 def _normalize_sales_items(data: Dict[str, Any], keyword: str) -> Dict[str, Dict[str, Any]]:
     """Best-effort parser for Marketplace Insights item sales responses."""
     raw_items = data.get("itemSales") or data.get("itemSummaries") or data.get("sales") or []
@@ -206,6 +244,9 @@ def _normalize_sales_items(data: Dict[str, Any], keyword: str) -> Dict[str, Dict
             "sold_count": int(_currency(quantity)),
             "sales_value": _currency(amount_value),
             "source": "Marketplace Insights",
+            # Precomputed so matching does not retokenize per comparison.
+            "_tokens": _title_tokens(title),
+            "price": _currency(amount_value),
         }
 
     return sales_by_title
@@ -223,11 +264,15 @@ def _fetch_market_products(
 
     all_products: List[Dict[str, Any]] = []
     errors: List[str] = []
+    niche_totals: Dict[str, int] = {}
+    niche_sold: Dict[str, Dict[str, int]] = {}
 
     for keyword in keywords:
+        # 10 listings is too thin a sample to compute a median, a price
+        # spread or seller concentration from. Browse allows up to 200.
         browse_params = {
             "q": keyword,
-            "limit": 10,
+            "limit": 100,
             "sort": "newlyListed",
         }
 
@@ -235,6 +280,10 @@ def _fetch_market_products(
         if err:
             errors.append(f"{keyword}: Browse search unavailable ({err})")
             continue
+
+        # `total` is the count of ALL active listings matching the keyword,
+        # not just the page we fetched — the real supply signal for a niche.
+        niche_totals[keyword] = int((data or {}).get("total") or 0)
 
         products = _normalize_active_items(data or {}, keyword)
 
@@ -248,7 +297,7 @@ def _fetch_market_products(
             "/buy/marketplace_insights/v1_beta/item_sales/search",
             {
                 "q": keyword,
-                "limit": 50,
+                "limit": 200,
                 "filter": f"lastSoldDate:[{_safe_utc(start_24)}..{_safe_utc(end_est)}]",
             },
         )
@@ -258,7 +307,7 @@ def _fetch_market_products(
             "/buy/marketplace_insights/v1_beta/item_sales/search",
             {
                 "q": keyword,
-                "limit": 50,
+                "limit": 200,
                 "filter": f"lastSoldDate:[{_safe_utc(start_90)}..{_safe_utc(end_est)}]",
             },
         )
@@ -266,18 +315,35 @@ def _fetch_market_products(
         sales24 = _normalize_sales_items(insights_24 or {}, keyword) if insights_24 else {}
         sales90 = _normalize_sales_items(insights_90 or {}, keyword) if insights_90 else {}
 
-        for product in products:
-            key = product["title"].lower()[:80]
-            product["sold_24h"] = sales24.get(key, {}).get("sold_count", 0)
-            product["sold_90d"] = sales90.get(key, {}).get("sold_count", 0)
+        # Niche-level sold totals. `total` counts every sale matching the
+        # query in the window, independent of whether a sold listing can be
+        # matched to an active one, so it is the trustworthy figure.
+        sold_24_total = int((insights_24 or {}).get("total") or 0)
+        sold_90_total = int((insights_90 or {}).get("total") or 0)
+        niche_sold[keyword] = {"sold_24h": sold_24_total, "sold_90d": sold_90_total}
 
-            # Factual fallback: if Marketplace Insights is unavailable, do NOT fake sales.
-            product["sales_source"] = "eBay Marketplace Insights" if (sales24 or sales90) else "Active eBay marketplace listing"
-            product["success_rate"] = (
-                round((product["sold_24h"] / max(product["sold_90d"], 1)) * 100, 1)
-                if product["sold_90d"]
-                else None
+        for product in products:
+            # Sold and active listings rarely share a byte-identical title,
+            # so exact-string keying returned 0 for almost everything even
+            # with Insights access. Match on significant-token overlap.
+            product["sold_24h"] = _match_sold(product["title"], sales24)
+            product["sold_90d"] = _match_sold(product["title"], sales90)
+
+            product["sales_source"] = (
+                "eBay Marketplace Insights" if (sales24 or sales90)
+                else "Active eBay marketplace listing"
             )
+            # Sell-through: share of this niche's active supply that sold in
+            # the window. This is the "is it moving" number. The previous
+            # formula divided 24h sold by 90d sold, which measures recency
+            # of sales, not whether anything sells at all.
+            active = niche_totals.get(keyword, 0)
+            product["sell_through_90d"] = (
+                round(sold_90_total / active * 100, 1) if active else None
+            )
+            product["niche_sold_24h"] = sold_24_total
+            product["niche_sold_90d"] = sold_90_total
+            product["success_rate"] = product["sell_through_90d"]
             # Ranking score prioritizes known sales; fallback ranks active comps by feedback/price.
             product["score"] = (
                 product["sold_24h"] * 8
@@ -302,10 +368,94 @@ def _fetch_market_products(
 
     return {
         "products": ranked,
+        # The full sample backs the statistics; `ranked` is only the top slice
+        # shown as cards, and medians taken from it would be badly skewed.
+        "sample": all_products,
+        "niche_totals": niche_totals,
+        "niche_sold": niche_sold,
         "errors": errors[:3],
         "generated_at_est": _now_est().strftime("%b %d, %Y %I:%M %p EST"),
         "reset_key": reset_key,
     }
+
+
+def _niche_analytics(sample: List[Dict[str, Any]], totals: Dict[str, int],
+                     sold: Dict[str, Dict[str, int]] = None) -> "pd.DataFrame":
+    """
+    Supply-side statistics per niche, computed from the active-listing sample.
+
+    Every column here is derived from data the Browse API returns for all
+    accounts. None of it is sold-velocity: that requires Marketplace
+    Insights, and inventing a proxy for it would be worse than leaving the
+    column out, because a seller would act on it.
+    """
+    rows = []
+    by_niche: Dict[str, List[Dict[str, Any]]] = {}
+    for p in sample:
+        by_niche.setdefault(p.get("keyword") or "unknown", []).append(p)
+
+    for niche, items in by_niche.items():
+        prices = sorted(p["price"] for p in items if p.get("price"))
+        if not prices:
+            continue
+        s = pd.Series(prices)
+
+        sellers = [p.get("seller") for p in items if p.get("seller")]
+        top_share = 0.0
+        if sellers:
+            counts = pd.Series(sellers).value_counts()
+            top_share = round(counts.iloc[0] / len(sellers) * 100, 1)
+
+        free_ship = sum(1 for p in items if not p.get("shipping")) / len(items) * 100
+        new_share = sum(1 for p in items
+                        if "new" in str(p.get("condition", "")).lower()) / len(items) * 100
+
+        q1, q3 = s.quantile(0.25), s.quantile(0.75)
+        sold_n = (sold or {}).get(niche, {})
+        active_n = totals.get(niche, 0)
+        sold_90 = sold_n.get("sold_90d", 0)
+
+        rows.append({
+            "niche": niche,
+            "active_listings": active_n,
+            "sold_24h": sold_n.get("sold_24h", 0),
+            "sold_90d": sold_90,
+            # The headline number: what share of active supply actually sold.
+            "sell_through_pct": round(sold_90 / active_n * 100, 1) if active_n else None,
+            "sold_per_day": round(sold_90 / 90, 1) if sold_90 else 0.0,
+            "sampled": len(items),
+            "median_price": round(s.median(), 2),
+            "p25": round(q1, 2),
+            "p75": round(q3, 2),
+            # Wide dispersion means the niche is not commoditised — there is
+            # room to position on price rather than race to the bottom.
+            "spread_pct": round((q3 - q1) / s.median() * 100, 1) if s.median() else 0.0,
+            "free_shipping_pct": round(free_ship, 1),
+            "new_condition_pct": round(new_share, 1),
+            "unique_sellers": len(set(sellers)),
+            "top_seller_share_pct": top_share,
+            "avg_seller_feedback": int(pd.Series(
+                [p.get("feedback", 0) for p in items]).mean()),
+        })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+
+    # Competition: more listings and a more concentrated top seller both make
+    # a niche harder to enter. Shown as an explicit, inspectable number
+    # rather than a black-box "opportunity score".
+    df["competition"] = (
+        df["active_listings"].rank(pct=True) * 70
+        + df["top_seller_share_pct"].rank(pct=True) * 30
+    ).round(0).astype(int)
+
+    # Rank by what actually sells when sold data is present; fall back to
+    # supply only when it is not, rather than pretending to know demand.
+    if df["sell_through_pct"].notna().any():
+        return df.sort_values("sell_through_pct", ascending=False,
+                              na_position="last").reset_index(drop=True)
+    return df.sort_values("active_listings", ascending=False).reset_index(drop=True)
 
 
 def _product_card(product: Dict[str, Any], index: int) -> str:
@@ -409,21 +559,127 @@ def _niche_summary(products: List[Dict[str, Any]]) -> pd.DataFrame:
     return grouped.sort_values(["sold_24h", "products"], ascending=False)
 
 
-def _render_charts(products: List[Dict[str, Any]]) -> None:
-    df = _niche_summary(products)
+def _render_charts(products: List[Dict[str, Any]], result: Dict[str, Any] = None) -> None:
+    result = result or {}
+    sample = result.get("sample") or products
+    df = _niche_analytics(sample, result.get("niche_totals") or {},
+                          result.get("niche_sold") or {})
     if df.empty:
         return
 
-    st.markdown("<div class='section-title'>Highest-Signal Niches</div>", unsafe_allow_html=True)
+    has_sold = df["sell_through_pct"].notna().any()
 
-    chart_df = df.head(8).set_index("niche")[["products"]]
-    st.bar_chart(chart_df, height=230)
+    st.markdown("<div class='section-title'>Niche Comparison</div>", unsafe_allow_html=True)
 
-    with st.expander("Niche details", expanded=False):
-        display = df.copy()
-        display["avg_price"] = display["avg_price"].map(lambda x: f"${x:,.2f}")
-        display["success_rate"] = display["success_rate"].map(lambda x: f"{x}%" if pd.notna(x) else "Requires Insights")
-        st.dataframe(display, hide_index=True, use_container_width=True)
+    if has_sold:
+        top = df.iloc[0]
+        a, b, c, d = st.columns(4)
+        a.metric("Best sell-through", top["niche"],
+                 f"{top['sell_through_pct']}% of active supply")
+        b.metric("Units sold / day", f"{top['sold_per_day']:,.1f}", "90-day average")
+        c.metric("Median price", f"${top['median_price']:,.2f}",
+                 f"${top['p25']:,.0f}–${top['p75']:,.0f} typical")
+        d.metric("Competition", f"{top['competition']}/100",
+                 f"{top['active_listings']:,} active listings", delta_color="inverse")
+    else:
+        st.info(
+            "Sold-history columns are blank, which means the Marketplace Insights "
+            "calls returned no data for these keywords. Everything below is "
+            "supply-side only — it shows what is listed, not what is selling."
+        )
+
+    # Sorted by whatever the seller is actually deciding on.
+    metric_label = {
+        "Sell-through %": "sell_through_pct",
+        "Units sold (90d)": "sold_90d",
+        "Units sold (24h)": "sold_24h",
+        "Median price": "median_price",
+        "Active listings": "active_listings",
+        "Competition": "competition",
+    }
+    choices = [k for k, v in metric_label.items()
+               if has_sold or v not in ("sell_through_pct", "sold_90d", "sold_24h")]
+    pick = st.selectbox("Rank niches by", choices, index=0)
+    col = metric_label[pick]
+
+    ranked = df.sort_values(col, ascending=False, na_position="last")
+    st.bar_chart(ranked.head(10).set_index("niche")[[col]], height=240)
+
+    display = ranked.copy()
+    for money in ("median_price", "p25", "p75"):
+        display[money] = display[money].map(lambda x: f"${x:,.2f}")
+    for pct in ("sell_through_pct", "free_shipping_pct",
+                "new_condition_pct", "top_seller_share_pct", "spread_pct"):
+        display[pct] = display[pct].map(
+            lambda x: f"{x}%" if pd.notna(x) else "—")
+    display["active_listings"] = display["active_listings"].map(lambda x: f"{x:,}")
+
+    st.dataframe(
+        display,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "niche": "Niche",
+            "active_listings": st.column_config.TextColumn(
+                "Active", help="Total live listings matching this keyword."),
+            "sold_24h": "Sold 24h",
+            "sold_90d": "Sold 90d",
+            "sell_through_pct": st.column_config.TextColumn(
+                "Sell-through",
+                help="Units sold in 90 days as a share of active listings. "
+                     "Higher means demand is absorbing supply."),
+            "sold_per_day": "Units/day",
+            "median_price": "Median",
+            "p25": "25th pct",
+            "p75": "75th pct",
+            "spread_pct": st.column_config.TextColumn(
+                "Spread", help="Interquartile range over the median. Wide "
+                               "spread means room to position on price."),
+            "free_shipping_pct": "Free ship",
+            "new_condition_pct": "New",
+            "unique_sellers": "Sellers",
+            "top_seller_share_pct": st.column_config.TextColumn(
+                "Top seller", help="Share of sampled listings held by the "
+                                   "single largest seller."),
+            "avg_seller_feedback": "Avg feedback",
+            "competition": st.column_config.ProgressColumn(
+                "Competition", min_value=0, max_value=100, format="%d"),
+            "sampled": None,
+        },
+    )
+
+    # Drill-down: one niche at a time, with its real price distribution.
+    st.markdown("<div class='section-title'>Niche Detail</div>", unsafe_allow_html=True)
+    focus = st.selectbox("Inspect a niche", list(df["niche"]), key="niche_focus")
+    items = [p for p in sample if p.get("keyword") == focus and p.get("price")]
+    row = df[df["niche"] == focus].iloc[0]
+
+    if items:
+        left, right = st.columns([1, 1])
+        with left:
+            prices = pd.Series(sorted(p["price"] for p in items))
+            # Ten buckets across the observed range shows where supply
+            # actually clusters, which a median alone hides.
+            bins = pd.cut(prices, bins=min(10, max(3, len(prices) // 3)))
+            hist = prices.groupby(bins, observed=True).count()
+            hist.index = [f"${int(i.left)}–{int(i.right)}" for i in hist.index]
+            st.caption(f"Price distribution — {len(items)} sampled listings")
+            st.bar_chart(hist, height=220)
+        with right:
+            st.caption("Where this niche stands")
+            st.write(f"**{row['unique_sellers']}** distinct sellers in the sample; "
+                     f"the largest holds **{row['top_seller_share_pct']}%**.")
+            st.write(f"**{row['new_condition_pct']}%** listed as new, "
+                     f"**{row['free_shipping_pct']}%** with free shipping.")
+            if pd.notna(row["sell_through_pct"]):
+                st.write(f"**{row['sold_90d']:,}** sold in 90 days against "
+                         f"**{row['active_listings']:,}** active listings "
+                         f"(**{row['sell_through_pct']}%** sell-through).")
+
+        top_sellers = pd.Series([p.get("seller") for p in items if p.get("seller")])
+        if not top_sellers.empty:
+            st.caption("Sellers holding the most listings in this niche")
+            st.bar_chart(top_sellers.value_counts().head(8), height=200)
 
 
 def _connected_label(owner_name: str) -> str:
@@ -510,7 +766,7 @@ Last refreshed: <b>{escape(result.get("generated_at_est", ""))}</b>.
         unsafe_allow_html=True,
     )
 
-    _render_charts(products)
+    _render_charts(products, result)
     st.markdown("<div class='section-title'>Top Marketplace Product Signals</div>", unsafe_allow_html=True)
     _render_products(products)
 
