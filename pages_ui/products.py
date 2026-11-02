@@ -242,7 +242,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r15 · 2026-11-02"
+APP_BUILD = "r16 · 2026-11-02"
 
 
 def _account_banner():
@@ -365,6 +365,11 @@ then automatically applies SEO optimization. No extra steps needed.</p>
         _run_import(url.strip())
     elif go:
         st.warning("Paste a product URL above first.")
+
+    # Always available, not only after a block: capture also beats a server
+    # fetch on client-rendered pages, where the HTML only has content once
+    # the page's own scripts have run.
+    _capture_panel(url.strip())
 
     # .get() rather than attribute access: Streamlit raises AttributeError
     # for a missing key instead of returning None, so any code path that
@@ -493,6 +498,94 @@ def _show_import_result(p: dict):
             st.session_state.import_result = None; st.rerun()
 
 
+def _capture_panel(src_url: str = "") -> None:
+    """
+    One-tap capture from the seller's own browser.
+
+    The bookmarklet posts the rendered page into a transient Supabase row;
+    this claims that row (deleting it in the same step) and runs the normal
+    extraction pipeline. Nothing about the page is retained in Supabase.
+    """
+    try:
+        from core.import_inbox import (
+            is_configured, claim_capture, pending_count,
+            capture_token, build_bookmarklet, CAPTURE_TTL_MINUTES,
+        )
+    except Exception:
+        return
+
+    owner = _owner()
+
+    if not is_configured():
+        st.info(
+            "One-tap capture needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY "
+            "in Streamlit secrets. Until then, use the paste box below."
+        )
+        return
+
+    waiting = pending_count(owner)
+
+    head, act = st.columns([3, 1])
+    with head:
+        if waiting:
+            st.success(
+                f"⚡ {waiting} captured page{'s' if waiting > 1 else ''} waiting."
+            )
+        else:
+            st.caption(
+                "⚡ One-tap capture — tap the eBay io button while on any "
+                "product page, then press Import below."
+            )
+    with act:
+        go = st.button("Import capture", type="primary",
+                       use_container_width=True, disabled=not waiting,
+                       key="claim_capture")
+
+    if go:
+        with st.spinner("Claiming capture..."):
+            cap = claim_capture(owner)
+        if not cap or not cap.get("html"):
+            st.warning("Nothing to import — the capture may have expired.")
+            return
+
+        with st.spinner("Extracting..."):
+            res = parse_product_html(cap["html"], cap.get("source_url", ""))
+        if not res["success"]:
+            st.error(f"❌ {res['error']}")
+            return
+
+        prod = res["product"]
+        with st.spinner("Auto-optimizing title, description & tags..."):
+            prod = auto_seo_optimize(prod)
+            prod["seo_auto_applied"] = True
+        st.session_state.import_result = prod
+        st.session_state.bot_wall_blocked = False
+        st.success(f"✅ {res['note']}")
+        st.rerun()
+
+    with st.expander("Set up one-tap capture", expanded=False):
+        token = capture_token(owner)
+        st.markdown(
+            f"""
+**Desktop** — drag this to your bookmarks bar, or make a new bookmark and paste
+the code below as its address. Then click it on any product page.
+
+**iPhone** — bookmark any page in Safari, edit the bookmark, and replace its
+address with the code below. Or build a Shortcut using *Run JavaScript on Web
+Page* that posts the same payload.
+
+A capture is claimed and deleted the moment you import it, and anything left
+unclaimed is discarded after {CAPTURE_TTL_MINUTES} minutes.
+"""
+        )
+        st.code(build_bookmarklet(owner, token), language="javascript")
+        st.caption(
+            "This captures the page you are already looking at, in your own "
+            "browser session. It does not automate or bypass anything on the "
+            "site — which is why it keeps working where a server fetch cannot."
+        )
+
+
 def _show_manual_entry_form():
     """
     Shown automatically when a source site blocks automated fetching with a
@@ -520,7 +613,9 @@ eBay formatting exactly like an automatic import.
     # The block stops a fetch, not the parser. If the seller opens the page
     # in their own browser (passing the challenge as a human) and copies the
     # source, the full extraction pipeline runs on it normally.
-    with st.expander("⚡ Faster: paste the page source and auto-extract", expanded=True):
+    _capture_panel(src_url)
+
+    with st.expander("⚡ Faster: paste the page source and auto-extract", expanded=False):
         st.markdown(
             "<p style='color:#744210;font-size:13px;line-height:1.55;'>"
             "Open the product page in your browser, view the page source, select all, "
