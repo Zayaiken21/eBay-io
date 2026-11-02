@@ -16,17 +16,19 @@
   /* Surfaces */
   --bg-main: #dfe7f3;
   --bg-deep: #b9c8dc;
-  --bg-card: rgba(255, 255, 255, 0.90);
-  --bg-sunken: rgba(246, 249, 255, 0.94);
+  --bg-card: #ffffff;
+  --bg-sunken: #f7f9fc;
 
   /* Ink */
   --text: #0f172a;
   --muted: #475569;
   --muted-2: #64748b;
 
-  /* Lines */
-  --border: rgba(15, 23, 42, 0.12);
-  --border-soft: rgba(36, 87, 255, 0.16);
+  /* Lines. Neutral hairlines, not blue-tinted — a colored border on every
+     card made the whole page read as decoration rather than structure. */
+  --border: rgba(15, 23, 42, 0.10);
+  --border-soft: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.16);
 
   /* Status */
   --ok: #276749;
@@ -38,15 +40,21 @@
   --danger: #9b2c2c;
   --danger-bg: #fee2e2;
 
-  /* Rhythm */
-  --r-sm: 12px;
-  --r-md: 16px;
-  --r-lg: 20px;
-  --r-xl: 26px;
+  /* Rhythm.
+     Radii are deliberately tight. Large radii on every panel read as
+     "bubbles" and undercut the product; the pill shape is reserved for the
+     nav and for status chips, where roundness carries meaning. */
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 12px;
+  --r-xl: 14px;
   --gap: 14px;
-  --shadow-sm: 0 6px 18px rgba(36, 87, 255, 0.08);
-  --shadow-md: 0 14px 34px rgba(36, 87, 255, 0.10);
-  --shadow-lg: 0 16px 42px rgba(15, 23, 42, 0.13);
+
+  /* Hairline borders do the structural work; shadows only lift a surface
+     off the page. Heavy tinted glows were what made panels look inflated. */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 1px 3px rgba(15, 23, 42, 0.07), 0 4px 12px rgba(15, 23, 42, 0.05);
+  --shadow-lg: 0 2px 6px rgba(15, 23, 42, 0.08), 0 12px 28px rgba(15, 23, 42, 0.08);
 
   /* The royal blend every hero and panel reuses. */
   --blend-royal: linear-gradient(135deg, var(--royal-blue) 0%, #1230a8 58%, var(--royal-ink) 100%);
@@ -152,6 +160,26 @@ code,
    nav bubble, primary actions, and hero corners.
    ========================================================================== */
 
+/* One bolt, drawn once, reused everywhere as a background layer. */
+:root {
+  --bolt-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 40'%3E%3Cpath d='M15 0 L3 23 H10.5 L8 40 L21 15.5 H13 Z' fill='%2392ff18'/%3E%3C/svg%3E");
+}
+
+/* Bolts rise and fade at slightly different rates per layer. */
+@keyframes bolt-drift {
+  0%   { background-position: 94% 32%, 87% 66%, 97% 80%; opacity: 0.42; }
+  50%  { background-position: 94% 26%, 87% 58%, 97% 72%; opacity: 0.62; }
+  100% { background-position: 94% 32%, 87% 66%, 97% 80%; opacity: 0.42; }
+}
+
+/* A single bolt travelling the length of a bar — used on the charge rail. */
+@keyframes bolt-run {
+  0%   { transform: translateX(-10%); opacity: 0; }
+  12%  { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { transform: translateX(110%); opacity: 0; }
+}
+
 @keyframes bolt-charge {
   0%, 88%, 100% { opacity: 0.55; transform: translateY(0) scale(1); }
   92%           { opacity: 1;    transform: translateY(-1px) scale(1.12); }
@@ -166,16 +194,42 @@ code,
 .bolt,
 .bolt-sm {
   display: inline-block;
-  width: 9px;
-  height: 15px;
-  background: linear-gradient(160deg, var(--yellow-green), var(--lime-green));
-  clip-path: polygon(56% 0%, 12% 56%, 44% 56%, 30% 100%, 88% 40%, 52% 40%);
-  vertical-align: -2px;
-  filter: drop-shadow(0 0 4px rgba(146, 255, 24, 0.7));
+  width: 8px;
+  height: 13px;
+  background: var(--bolt-svg) center / contain no-repeat;
+  vertical-align: -1px;
+  filter: drop-shadow(0 0 3px rgba(146, 255, 24, 0.55));
   animation: bolt-charge 4.5s ease-in-out infinite;
 }
 
-.bolt-sm { width: 7px; height: 11px; vertical-align: -1px; }
+.bolt-sm { width: 6px; height: 10px; vertical-align: 0; }
+
+/* Charge rail: a hairline track with a small bolt running along it. Sits
+   under a hero or above a section to signal live activity without taking
+   up real space. */
+.charge-rail {
+  position: relative;
+  height: 2px;
+  border-radius: 2px;
+  margin: 10px 0 2px;
+  background: linear-gradient(90deg,
+    rgba(36, 87, 255, 0.05),
+    rgba(36, 87, 255, 0.18),
+    rgba(36, 87, 255, 0.05));
+  overflow: visible;
+}
+
+.charge-rail::after {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 0;
+  width: 7px;
+  height: 12px;
+  background: var(--bolt-svg) center / contain no-repeat;
+  filter: drop-shadow(0 0 5px rgba(146, 255, 24, 0.8));
+  animation: bolt-run 4.2s cubic-bezier(0.4, 0, 0.3, 1) infinite;
+}
 
 .bolt:nth-of-type(2) { animation-delay: 0.7s; }
 .bolt:nth-of-type(3) { animation-delay: 1.4s; }
@@ -396,18 +450,20 @@ select {
   color: #fff;
 }
 
+/* A drift of small bolts across the hero's right side. Three layers of one
+   SVG at different sizes, each rising at its own pace, so the motion reads
+   as a current moving through the panel rather than one big graphic. */
 .app-hero::after {
   content: "";
   position: absolute;
-  top: -12%;
-  right: -2%;
-  width: 92px;
-  height: 150px;
-  background: linear-gradient(160deg, var(--yellow-green), var(--lime-green));
-  clip-path: polygon(56% 0%, 12% 56%, 44% 56%, 30% 100%, 88% 40%, 52% 40%);
-  opacity: 0.18;
+  inset: 0;
+  background-image: var(--bolt-svg), var(--bolt-svg), var(--bolt-svg);
+  background-repeat: no-repeat;
+  background-size: 13px 21px, 9px 15px, 7px 11px;
+  background-position: 94% 30%, 87% 64%, 97% 78%;
+  opacity: 0.5;
   pointer-events: none;
-  animation: bolt-charge 6s ease-in-out infinite;
+  animation: bolt-drift 7s ease-in-out infinite;
 }
 
 .app-hero h1 {
@@ -461,15 +517,16 @@ select {
 .metric-card {
   padding: 16px;
   border-radius: var(--r-lg);
-  background: var(--bg-card);
-  border: 1px solid var(--border-soft);
-  box-shadow: var(--shadow-md);
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
+  background: #fff;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
+/* Lift by sharpening the edge, not by floating the card. */
 .metric-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-lg);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
 }
 
 .metric-card h3 {
