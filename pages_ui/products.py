@@ -396,7 +396,7 @@ def _run_import(url: str):
         # Clear any previous import before showing the error. Without this the
         # last successful product stays on screen under a fresh failure
         # message, which reads as though the failed URL was extracted.
-        st.session_state.pop("import_result", None)
+        st.session_state.import_result = None
         if result.get("bot_wall"):
             st.error(f"🛑 {result['error']}")
             st.session_state.bot_wall_blocked = True
