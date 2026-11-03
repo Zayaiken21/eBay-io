@@ -12,6 +12,8 @@ bullets, urgency, trust signals) rather than generic boilerplate.
 import re
 from collections import Counter
 
+from ui import seo_engine
+
 # ── eBay high-converting category keyword banks ──────────────────────────
 # Each category maps to (a) SEARCH keywords buyers actually type, used to
 # boost tag/title relevance, and (b) CONVERSION phrases used to make bullet
@@ -133,6 +135,19 @@ def rewrite_title(original_title: str, brand: str = "", category: str = "",
         shift = variant % len(supported)
         supported = supported[shift:] + supported[:shift]
 
+    # Hand the pieces to the phrase engine, which varies where brand, product
+    # name and keywords sit relative to each other rather than only appending
+    # keywords in a fixed order. Everything it places is already evidenced
+    # above, so reordering cannot introduce a claim.
+    core = re.sub(r"^\s*" + re.escape(brand) + r"\s*", "", title,
+                  flags=re.I).strip() if brand else title
+    fresh = [kw for kw in supported if kw not in lowered_title]
+    reshaped = seo_engine.title_variants(brand, core, fresh, variant)
+    if reshaped and len(reshaped) <= 80:
+        title = reshaped
+        lowered_title = title.lower()
+
+    # Fill any remaining budget with supported keywords the shape left out.
     for kw in supported:
         if len(title) >= 75:
             break
@@ -194,11 +209,15 @@ def rewrite_description(
     hook = _build_hook(desc_clean, title, brand, cat_key,
                        features=features, specs=specifications, variant=variant)
 
-    feat_bullets = [f"✔ {_benefit_frame(f)}" for f in features[:8]]
-    mentioned = " ".join(features).lower()
-    for kw in ckw[:4]:
-        if kw not in mentioned and len(feat_bullets) < 10:
-            feat_bullets.append(f"✔ {kw.title()} — built for everyday reliability")
+    # Bullets come from the product's own features. The phrase engine varies
+    # the glyph and the sentence frame; the feature text inside is untouched.
+    #
+    # The old code also appended a bullet per unmatched category keyword
+    # ("Heavy Duty — built for everyday reliability") whether or not the
+    # product's copy supported it, which put invented claims in the listing.
+    # Keyword coverage belongs in the title and tags, where it is filtered
+    # against the source text.
+    feat_bullets = seo_engine.bullets(features[:8], variant)
 
     spec_lines = [f"• {k}: {v}" for k, v in list(specifications.items())[:15]]
 
@@ -211,31 +230,23 @@ def rewrite_description(
     sections = [hook] if hook else []
 
     if feat_bullets:
-        sections.append("✅ KEY BENEFITS\n" + "\n".join(feat_bullets))
+        sections.append(seo_engine.heading("benefits", variant)
+                        + "\n" + "\n".join(feat_bullets))
 
     if spec_lines:
-        sections.append("📋 SPECIFICATIONS\n" + "\n".join(spec_lines))
+        sections.append(seo_engine.heading("specs", variant)
+                        + "\n" + "\n".join(spec_lines))
 
     if body:
         sections.append(body)
 
     if box_items:
-        sections.append("📦 WHAT'S IN THE BOX\n" + "\n".join(f"• {i}" for i in box_items))
+        sections.append(seo_engine.heading("box", variant)
+                        + "\n" + "\n".join(f"• {i}" for i in box_items))
 
-    sections.append(
-        "🛒 BUY WITH CONFIDENCE\n"
-        "• Every item is quality checked before it ships.\n"
-        "• Fast, secure shipping with tracking on every order.\n"
-        "• Friendly support — message us anytime, we reply within 24 hours.\n"
-        "• Hassle-free returns if it's not the right fit."
-    )
-
-    sections.append(
-        "🚚 SHIPPING & HANDLING\n"
-        "• Orders are carefully packed and dispatched within 1–2 business days.\n"
-        "• Combined shipping available on multiple purchases — message us first.\n"
-        "• Tracking provided on every order."
-    )
+    sections.append(seo_engine.trust_block(variant))
+    sections.append(seo_engine.shipping_block(variant))
+    sections.append(seo_engine.closer(variant))
 
     return {"success": True, "description": "\n\n".join(s for s in sections if s.strip()), "error": None}
 
@@ -390,13 +401,8 @@ def _extract_facts(desc: str, features: list, specs: dict) -> dict:
 # Opening-line shapes. Each is assembled from the product's own facts, so the
 # sentence is this listing's, not the source page's. Rotating through them
 # means two sellers importing the same product do not publish identical copy.
-_HOOK_SHAPES = [
-    "{noun}{brand_of} — {detail}.",
-    "{detail_cap}. Everything you need in one {noun_l}.",
-    "This {noun_l}{brand_by} includes {detail}.",
-    "{noun_cap}{brand_of}: {detail}.",
-    "Looking for {noun_l}? This one offers {detail}.",
-]
+# Hook shapes now live in seo_engine.OPENERS, where they are one slot in a
+# larger grammar rather than a five-item rotation.
 
 
 def _compose_hook(title: str, brand: str, facts: dict, variant: int = 0) -> str:
@@ -415,16 +421,8 @@ def _compose_hook(title: str, brand: str, facts: dict, variant: int = 0) -> str:
         return ""
 
     detail = bits[0] if len(bits) == 1 else ", ".join(bits[:-1]) + f" and {bits[-1]}"
-    shape = _HOOK_SHAPES[variant % len(_HOOK_SHAPES)]
-    return shape.format(
-        noun=noun,
-        noun_l=noun.lower(),
-        noun_cap=noun[:1].upper() + noun[1:],
-        brand_of=f" from {brand}" if brand else "",
-        brand_by=f" by {brand}" if brand else "",
-        detail=detail,
-        detail_cap=detail[:1].upper() + detail[1:],
-    ).replace("  ", " ")
+    subject = f"{noun} from {brand}" if brand else noun
+    return seo_engine.opener(subject, detail, variant)
 
 
 def _build_hook(desc: str, title: str, brand: str, cat_key: str,
@@ -450,15 +448,8 @@ def _build_hook(desc: str, title: str, brand: str, cat_key: str,
         noun = re.sub(r"\s*[,|].*$", "", str(title or "Item")).strip()
         noun = re.sub(r"^\s*" + re.escape(brand) + r"\s*", "", noun,
                       flags=re.I).strip() or "item"
-        shape = _HOOK_SHAPES[variant % len(_HOOK_SHAPES)]
-        return shape.format(
-            noun=noun, noun_l=noun.lower(),
-            noun_cap=noun[:1].upper() + noun[1:],
-            brand_of=f" from {brand}" if brand else "",
-            brand_by=f" by {brand}" if brand else "",
-            detail=lead[:1].lower() + lead[1:],
-            detail_cap=lead[:1].upper() + lead[1:],
-        ).replace("  ", " ")
+        subject = f"{noun} from {brand}" if brand else noun
+        return seo_engine.opener(subject, lead, variant)
 
     # No usable source text. Previously this returned invented marketing copy
     # ("Introducing the X — built to deliver outstanding performance and
@@ -480,13 +471,16 @@ def _benefit_frame(feature: str) -> str:
 
 # Headings this module emits. Used to recognise — and remove — its own
 # previous output so a rebuild replaces it instead of nesting inside it.
-_GENERATED_HEADINGS = [
-    "✅ KEY BENEFITS", "KEY BENEFITS",
-    "📋 SPECIFICATIONS", "SPECIFICATIONS",
-    "📦 WHAT'S IN THE BOX", "WHAT'S IN THE BOX",
-    "🛒 BUY WITH CONFIDENCE", "BUY WITH CONFIDENCE",
-    "🚚 SHIPPING & HANDLING", "SHIPPING & HANDLING",
-]
+#
+# Derived from the phrase engine's own banks rather than hand-listed. The
+# engine varies section titles per variant, so a fixed list would miss the
+# heading a previous pass happened to pick and the old output would survive
+# into the new one — which is exactly the doubling bug this guards against.
+_GENERATED_HEADINGS = sorted(
+    {t for bank in seo_engine.SECTION_TITLES.values() for t in bank},
+    key=len,
+    reverse=True,
+)
 
 
 def _strip_generated(text: str) -> str:
@@ -504,8 +498,18 @@ def _strip_generated(text: str) -> str:
         if idx != -1:
             cut = min(cut, idx)
     cleaned = text[:cut].strip()
+    # The cut lands on the heading text, so the icon that preceded it is left
+    # dangling at the end. Drop any trailing section icon.
+    # Matched as a run, not a single character: several of these icons are
+    # two codepoints (base plus variation selector), so a one-char class
+    # would leave the selector behind as an invisible stray.
+    _icons = "".join(seo_engine.SECTION_ICONS)
+    cleaned = re.sub(r"[" + _icons + r"️\s]+$", "", cleaned).strip()
     # Drop our own bullet glyphs if any survived ahead of the first heading.
-    cleaned = re.sub(r"^[✔✓•]\s*", "", cleaned, flags=re.M)
+    cleaned = re.sub(
+        r"^[" + "".join(seo_engine.BULLET_LEADS) + r"•]\s*", "",
+        cleaned, flags=re.M,
+    )
     return cleaned.strip()
 
 
