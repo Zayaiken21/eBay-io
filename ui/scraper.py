@@ -670,8 +670,10 @@ def _shopify_variants(sp: dict, images: list):
     # value is "Default Title", so an empty-options check alone misses it.
     if len(rows) == 1:
         vals = [str(v).strip().lower() for v in rows[0]["options"].values()]
-        if rows[0]["title"].strip().lower() in ("", "default title") or \
-           all(v in ("", "default title") for v in vals):
+        # Suppress only when the option VALUES are placeholders. Testing the
+        # variant title too dropped real options whenever that field was
+        # empty, so a one-variant product lost its Size/Color specific.
+        if not vals or all(v in ("", "default title") for v in vals):
             return [], []
 
     return options, rows
