@@ -86,7 +86,8 @@ def _match_category(text: str) -> tuple[str, list]:
 
 
 def rewrite_title(original_title: str, brand: str = "", category: str = "",
-                   features: list = None, condition: str = "") -> dict:
+                   features: list = None, condition: str = "",
+                   variant: int = 0) -> dict:
     """
     Builds a high-converting eBay title using the same structure top sellers
     use: Brand + Product Name + Key Differentiator(s) + Condition signal,
@@ -124,10 +125,18 @@ def rewrite_title(original_title: str, brand: str = "", category: str = "",
         " ".join(str(f) for f in (features or [])),
     ]).lower()
 
-    for kw in sorted(cat_kws, key=len, reverse=True):
+    supported = [k for k in sorted(cat_kws, key=len, reverse=True)
+                 if k in evidence]
+    # Rotate the starting point so successive clicks surface a different
+    # supported keyword first instead of rebuilding the identical title.
+    if supported and variant:
+        shift = variant % len(supported)
+        supported = supported[shift:] + supported[:shift]
+
+    for kw in supported:
         if len(title) >= 75:
             break
-        if kw in lowered_title or kw not in evidence:
+        if kw in lowered_title:
             continue
         candidate = f"{title} {kw.title()}"
         if len(candidate) <= 80:
@@ -237,7 +246,8 @@ def rewrite_description(
     return {"success": True, "description": "\n\n".join(s for s in sections if s.strip()), "error": None}
 
 
-def generate_tags(title: str, description: str, category: str = "") -> dict:
+def generate_tags(title: str, description: str, category: str = "",
+                  variant: int = 0) -> dict:
     """
     Generates up to 15 high-value eBay search tags: real word-frequency
     signal from the actual listing content, boosted by category-specific
@@ -275,6 +285,14 @@ def generate_tags(title: str, description: str, category: str = "") -> dict:
     # Interleave: prioritize multi-word phrases (higher buyer-intent match)
     # then fill remaining slots with frequency-ranked single words.
     combined = phrase_tags[:5] + [t for t in single_tags if t not in " ".join(phrase_tags)]
+    # Rotate beyond the top slice so a repeat click surfaces different
+    # long-tail terms rather than returning the same fifteen.
+    if variant and len(combined) > 4:
+        # Keep the three strongest terms pinned and rotate the rest, so the
+        # tag set changes without losing its best matches.
+        head, tail = combined[:3], combined[3:]
+        shift = variant % len(tail)
+        combined = head + tail[shift:] + tail[:shift]
     tags = combined[:15]
 
     return {"success": True, "tags": tags, "error": None}
@@ -295,12 +313,16 @@ def auto_seo_optimize(product: dict, variant: int = 0) -> dict:
         category=product.get("category", ""),
         features=product.get("features", []),
         condition=product.get("condition", ""),
+        variant=variant,
     )
     if title_result["success"]:
         updated["title"] = title_result["title"]
 
     desc_result = rewrite_description(
-        title=updated["title"],
+        # The product's own name, not the keyword-expanded title: the hook
+        # reads as a sentence, and appended search terms belong in the title
+        # field rather than inside prose.
+        title=product.get("title") or updated["title"],
         original_description=product.get("description", ""),
         features=product.get("features", []),
         specifications=product.get("specifications", {}),
@@ -311,7 +333,8 @@ def auto_seo_optimize(product: dict, variant: int = 0) -> dict:
     if desc_result["success"]:
         updated["description"] = desc_result["description"]
 
-    tags_result = generate_tags(updated["title"], updated["description"], product.get("category", ""))
+    tags_result = generate_tags(updated["title"], updated["description"],
+                                product.get("category", ""), variant=variant)
     if tags_result["success"]:
         updated["tags"] = tags_result["tags"]
 
@@ -421,6 +444,25 @@ def _build_hook(desc: str, title: str, brand: str, cat_key: str,
     composed = _compose_hook(title, brand, _extract_facts(desc, features, specs), variant)
     if composed:
         return composed
+
+    # No count/material/includes matched. Compose from the product's leading
+    # feature instead, which is still the product's own fact rather than an
+    # invented claim, and still varies by shape so repeat clicks differ.
+    lead = next((str(f).strip().rstrip(".") for f in (features or [])
+                 if len(str(f).strip()) > 12), "")
+    if lead:
+        noun = re.sub(r"\s*[,|].*$", "", str(title or "Item")).strip()
+        noun = re.sub(r"^\s*" + re.escape(brand) + r"\s*", "", noun,
+                      flags=re.I).strip() or "item"
+        shape = _HOOK_SHAPES[variant % len(_HOOK_SHAPES)]
+        return shape.format(
+            noun=noun, noun_l=noun.lower(),
+            noun_cap=noun[:1].upper() + noun[1:],
+            brand_of=f" from {brand}" if brand else "",
+            brand_by=f" by {brand}" if brand else "",
+            detail=lead[:1].lower() + lead[1:],
+            detail_cap=lead[:1].upper() + lead[1:],
+        ).replace("  ", " ")
 
     # No usable source text. Previously this returned invented marketing copy
     # ("Introducing the X — built to deliver outstanding performance and

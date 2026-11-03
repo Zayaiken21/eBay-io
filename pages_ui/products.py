@@ -246,7 +246,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r25 · 2026-11-02"
+APP_BUILD = "r26 · 2026-11-02"
 
 
 def _account_banner():
@@ -858,15 +858,22 @@ def _tab_drafts():
 <span>Updated {upd}</span>
 </div>""", unsafe_allow_html=True)
         with ca:
-            b1, b2, b3 = st.columns(3)
+            # Keyed so the stylesheet keeps these three inline. The global
+            # narrow-screen rule stacks columns, which turned one row of
+            # icon actions into three full-width rows per draft.
+            acts = st.container(key=f"draft_acts_{did}")
+            b1, b2, b3 = acts.columns(3)
             with b1:
-                if st.button("✏️", key=f"e_{did}", help="Edit"):
+                if st.button("✏️", key=f"e_{did}", help="Edit",
+                             use_container_width=True):
                     _open_editor(did); st.rerun()
             with b2:
-                if st.button("⧉",  key=f"d_{did}", help="Duplicate"):
+                if st.button("⧉",  key=f"d_{did}", help="Duplicate",
+                             use_container_width=True):
                     duplicate_draft(did); st.rerun()
             with b3:
-                if st.button("🗑",  key=f"x_{did}", help="Delete"):
+                if st.button("🗑",  key=f"x_{did}", help="Delete",
+                             use_container_width=True):
                     delete_draft(did); st.rerun()
 
         st.markdown("<div style='border-top:1px solid #f0f4f9;margin:5px 0;'></div>",
@@ -947,6 +954,22 @@ def _checklist(p: dict) -> list:
     ]
 
 
+def _sync_editor_widgets(p: dict) -> None:
+    """
+    Push programmatic edits into the widgets that display them.
+
+    A Streamlit widget with a key owns its value: once key "ed_title" exists
+    in session_state, the value= argument is ignored on every later run. So
+    rewriting p["title"] changed the draft but the box kept showing the old
+    text, which made the rewrite buttons look dead. Writing the widget keys
+    before the rerun is what makes the new text visible.
+    """
+    st.session_state["ed_title"] = p.get("title", "")
+    st.session_state["ed_desc"] = p.get("description", "")
+    st.session_state["ed_tags"] = ", ".join(p.get("tags", []) or [])
+    st.session_state["ed_feats"] = "\n".join(p.get("features", []) or [])
+
+
 def _tab_editor():
     if not st.session_state.edit_product:
         st.info("No draft open. Go to Drafts and click ✏️ Edit.")
@@ -986,6 +1009,7 @@ def _tab_editor():
                 p["seo_auto_applied"] = True
                 st.session_state.edit_product = p
             save_draft(p, did)
+            _sync_editor_widgets(p)
             st.success("Rewritten and saved.")
             st.rerun()
     with csave:
@@ -1014,10 +1038,16 @@ def _tab_editor():
                                         label_visibility="collapsed", key="ed_title")
         with ctb:
             if st.button("✨ Title", use_container_width=True, help="Rewrite the title"):
+                st.session_state["_seo_variant"] = st.session_state.get("_seo_variant", 0) + 1
                 r = rewrite_title(p.get("title",""), brand=p.get("brand",""),
                                    category=p.get("category",""), features=p.get("features",[]),
-                                   condition=p.get("condition",""))
-                if r["success"]: p["title"] = r["title"]; st.rerun()
+                                   condition=p.get("condition",""),
+                                   variant=st.session_state["_seo_variant"])
+                if r["success"]:
+                    p["title"] = r["title"]
+                    st.session_state.edit_product = p
+                    _sync_editor_widgets(p)
+                    st.rerun()
 
         tl = len(p.get("title",""))
         tcls = "title-ok" if tl <= 80 else "title-over"
@@ -1099,8 +1129,14 @@ def _tab_editor():
                         specifications=p.get("specifications",{}),
                         category=p.get("category",""),
                         brand=p.get("brand",""),
+                        variant=st.session_state.get("_seo_variant", 0) + 1,
                     )
-                    if r["success"]: p["description"] = r["description"]; st.rerun()
+                    st.session_state["_seo_variant"] = st.session_state.get("_seo_variant", 0) + 1
+                    if r["success"]:
+                        p["description"] = r["description"]
+                        st.session_state.edit_product = p
+                        _sync_editor_widgets(p)
+                        st.rerun()
 
         p["description"] = st.text_area("Description", value=p.get("description",""),
                                           height=260, label_visibility="collapsed", key="ed_desc")
@@ -1129,8 +1165,15 @@ def _tab_editor():
         ctg, ctgb = st.columns([6, 1])
         with ctgb:
             if st.button("✨ Tags", use_container_width=True, key="btn_tags", help="Regenerate tags"):
-                r = generate_tags(p.get("title",""), p.get("description",""), p.get("category",""))
-                if r["success"]: p["tags"] = r["tags"]; st.rerun()
+                st.session_state["_seo_variant"] = st.session_state.get("_seo_variant", 0) + 1
+                r = generate_tags(p.get("title",""), p.get("description",""),
+                                  p.get("category",""),
+                                  variant=st.session_state["_seo_variant"])
+                if r["success"]:
+                    p["tags"] = r["tags"]
+                    st.session_state.edit_product = p
+                    _sync_editor_widgets(p)
+                    st.rerun()
         with ctg:
             tags_ed = st.text_input("Tags (comma-separated)", value=", ".join(p.get("tags",[])),
                                      label_visibility="collapsed", key="ed_tags")

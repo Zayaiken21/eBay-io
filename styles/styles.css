@@ -948,3 +948,36 @@ hr { border-color: var(--border-soft) !important; }
 .stButton > button p {
   white-space: nowrap;
 }
+
+/* --------------------------------------------------------------------------
+   Draft row actions. Three icon buttons belong on one line; the global
+   narrow-screen stacking rule turned them into three full-width rows per
+   draft, so a list of ten drafts was thirty rows of buttons.
+   -------------------------------------------------------------------------- */
+[class*="st-key-draft_acts_"] [data-testid="stHorizontalBlock"] {
+  flex-wrap: nowrap !important;
+  gap: 6px !important;
+  justify-content: flex-end !important;
+}
+
+[class*="st-key-draft_acts_"] [data-testid="stColumn"] {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+}
+
+[class*="st-key-draft_acts_"] .stButton > button {
+  min-height: 36px !important;
+  height: 36px !important;
+  width: 40px !important;
+  padding: 0 !important;
+}
+
+/* A little more air between the nav pills so they never read as touching. */
+.st-key-top_menu_area div[data-testid="stHorizontalBlock"] {
+  gap: 10px !important;
+}
+
+.st-key-prod_tab_row [data-testid="stHorizontalBlock"] {
+  gap: 10px !important;
+}
