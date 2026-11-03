@@ -167,6 +167,7 @@ def rewrite_description(
     specifications: dict = None,
     category: str = "",
     brand: str = "",
+    variant: int = 0,
 ) -> dict:
     """
     Builds a high-converting eBay description using a proven direct-response
@@ -187,7 +188,8 @@ def rewrite_description(
 
     cat_key, ckw = _match_category(f"{category} {title}")
 
-    hook = _build_hook(desc_clean, title, brand, cat_key)
+    hook = _build_hook(desc_clean, title, brand, cat_key,
+                       features=features, specs=specifications, variant=variant)
 
     feat_bullets = [f"✔ {_benefit_frame(f)}" for f in features[:8]]
     mentioned = " ".join(features).lower()
@@ -278,7 +280,7 @@ def generate_tags(title: str, description: str, category: str = "") -> dict:
     return {"success": True, "tags": tags, "error": None}
 
 
-def auto_seo_optimize(product: dict) -> dict:
+def auto_seo_optimize(product: dict, variant: int = 0) -> dict:
     """
     Full automated, unlimited-use SEO pass: rewrites title + description +
     tags in one call. No usage cap, no API dependency — runs purely on the
@@ -304,6 +306,7 @@ def auto_seo_optimize(product: dict) -> dict:
         specifications=product.get("specifications", {}),
         category=product.get("category", ""),
         brand=product.get("brand", ""),
+        variant=variant,
     )
     if desc_result["success"]:
         updated["description"] = desc_result["description"]
@@ -324,12 +327,100 @@ def _clean(text: str) -> str:
     return re.sub(r'\s+', ' ', text).strip()
 
 
-def _build_hook(desc: str, title: str, brand: str, cat_key: str) -> str:
-    """Benefit-led opening line — what real high-converting listings lead with."""
-    sents = re.split(r'(?<=[.!?])\s+', desc)
-    good  = [s.strip() for s in sents if 30 < len(s.strip()) < 300]
-    if good:
-        return " ".join(good[:2])
+def _extract_facts(desc: str, features: list, specs: dict) -> dict:
+    """
+    Pulls factual details out of the source: counts, what is included,
+    materials, sizes.
+
+    Facts are not protected by copyright — the supplier's particular wording
+    is. Composing from facts is what makes the listing genuinely original,
+    rather than a reworded copy of someone else's paragraph.
+    """
+    blob = " ".join([str(desc or "")] + [str(f) for f in (features or [])]
+                    + [f"{k} {v}" for k, v in (specs or {}).items()])
+
+    facts = {}
+    m = re.search(r"\b(\d{1,4})\s*(?:to|-|–)\s*(\d{1,4})\b", blob)
+    if m:
+        facts["count"] = f"{m.group(1)}–{m.group(2)}"
+    else:
+        m = re.search(r"\b(\d{1,4})\s+(?:pack|pieces|pcs|count|varieties|items|sets)\b",
+                      blob, re.I)
+        if m:
+            facts["count"] = m.group(1)
+
+    for word in ("stainless steel", "solid wood", "silicone", "cotton",
+                 "leather", "aluminum", "bamboo", "ceramic", "glass"):
+        if word in blob.lower():
+            facts["material"] = word
+            break
+
+    includes = re.findall(r"(?:includes?|comes with|set of)\s+([^.;:•\n]{4,70})",
+                          blob, re.I)
+    if includes:
+        # Trim at a word boundary; a hard 70-char slice ran into whatever
+        # text followed and left a dangling letter.
+        got = includes[0].strip()
+        if len(got) > 58:
+            got = got[:58].rsplit(" ", 1)[0]
+        facts["includes"] = got.rstrip(" ,-")
+
+    return facts
+
+
+# Opening-line shapes. Each is assembled from the product's own facts, so the
+# sentence is this listing's, not the source page's. Rotating through them
+# means two sellers importing the same product do not publish identical copy.
+_HOOK_SHAPES = [
+    "{noun}{brand_of} — {detail}.",
+    "{detail_cap}. Everything you need in one {noun_l}.",
+    "This {noun_l}{brand_by} includes {detail}.",
+    "{noun_cap}{brand_of}: {detail}.",
+    "Looking for {noun_l}? This one offers {detail}.",
+]
+
+
+def _compose_hook(title: str, brand: str, facts: dict, variant: int = 0) -> str:
+    """Builds an opening line from facts, varying the shape per call."""
+    noun = re.sub(r"\s*[,|].*$", "", str(title or "Item")).strip()
+    noun = re.sub(r"^\s*" + re.escape(brand) + r"\s*", "", noun, flags=re.I).strip() or "item"
+
+    bits = []
+    if facts.get("count"):
+        bits.append(f"{facts['count']} pieces")
+    if facts.get("material"):
+        bits.append(f"{facts['material']} construction")
+    if facts.get("includes"):
+        bits.append(facts["includes"])
+    if not bits:
+        return ""
+
+    detail = bits[0] if len(bits) == 1 else ", ".join(bits[:-1]) + f" and {bits[-1]}"
+    shape = _HOOK_SHAPES[variant % len(_HOOK_SHAPES)]
+    return shape.format(
+        noun=noun,
+        noun_l=noun.lower(),
+        noun_cap=noun[:1].upper() + noun[1:],
+        brand_of=f" from {brand}" if brand else "",
+        brand_by=f" by {brand}" if brand else "",
+        detail=detail,
+        detail_cap=detail[:1].upper() + detail[1:],
+    ).replace("  ", " ")
+
+
+def _build_hook(desc: str, title: str, brand: str, cat_key: str,
+                features: list = None, specs: dict = None,
+                variant: int = 0) -> str:
+    """
+    Opening line, composed from the product's own facts.
+
+    Previously this lifted the first two sentences of the supplier's
+    description verbatim, which copied their expression into the listing.
+    It now states the same facts in wording this app generates.
+    """
+    composed = _compose_hook(title, brand, _extract_facts(desc, features, specs), variant)
+    if composed:
+        return composed
 
     # No usable source text. Previously this returned invented marketing copy
     # ("Introducing the X — built to deliver outstanding performance and

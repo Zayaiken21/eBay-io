@@ -14,6 +14,7 @@ eBay upload: core.ebay_account_store handles token refresh — always fresh,
              never a stale "please sign in" when already connected.
 """
 
+from html import escape
 import re
 import streamlit as st
 import streamlit.components.v1 as components
@@ -245,7 +246,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r24 · 2026-11-02"
+APP_BUILD = "r25 · 2026-11-02"
 
 
 def _account_banner():
@@ -961,26 +962,34 @@ def _tab_editor():
             "Publishing from here will update this exact listing on eBay — it will not create a duplicate."
         )
 
-    cb, cm, cseo, csave = st.columns([1, 4, 2, 1])
+    # Title above its own toolbar: the heading was competing with three
+    # buttons for one row and got truncated mid-word.
+    st.markdown(
+        f"<div class='editor-title'>✏️ {escape(str(p.get('title','Untitled')))}</div>",
+        unsafe_allow_html=True,
+    )
+
+    bar = st.container(key="editor_toolbar")
+    cb, cseo, csave = bar.columns([1, 1.4, 0.7])
     with cb:
-        if st.button("← Drafts"):
+        if st.button("← Drafts", use_container_width=True):
             st.session_state.edit_product = None
             _set_tab("drafts"); st.rerun()
-    with cm:
-        st.markdown(f"<div style='font-size:14px;font-weight:700;padding-top:7px;color:#1a202c;'>"
-                    f"✏️ {p.get('title','Untitled')[:55]}</div>", unsafe_allow_html=True)
     with cseo:
-        if st.button("🔄 Re-optimize", type="secondary", use_container_width=True,
-                     help="SEO was already auto-applied when this draft was created. Click to re-run it against your current edits."):
-            with st.spinner("Optimizing…"):
-                p = auto_seo_optimize(p)
+        if st.button("🔄 Rewrite", type="secondary", use_container_width=True,
+                     help="Rewrites the title, description and tags. Each click produces a different wording."):
+            with st.spinner("Rewriting…"):
+                # Advance the variant so each click yields a different
+                # wording rather than regenerating the identical text.
+                st.session_state["_seo_variant"] = st.session_state.get("_seo_variant", 0) + 1
+                p = auto_seo_optimize(p, variant=st.session_state["_seo_variant"])
                 p["seo_auto_applied"] = True
                 st.session_state.edit_product = p
             save_draft(p, did)
-            st.success("SEO re-applied & saved!")
+            st.success("Rewritten and saved.")
             st.rerun()
     with csave:
-        if st.button("💾", use_container_width=True, help="Save draft"):
+        if st.button("💾 Save", use_container_width=True, help="Save draft"):
             save_draft(p, did); st.toast("Saved!", icon="✅")
 
     score = _seo_score(p)
@@ -1004,7 +1013,7 @@ def _tab_editor():
             p["title"] = st.text_input("Title", value=p.get("title",""),
                                         label_visibility="collapsed", key="ed_title")
         with ctb:
-            if st.button("✨", use_container_width=True, help="Clean & optimize title"):
+            if st.button("✨ Title", use_container_width=True, help="Rewrite the title"):
                 r = rewrite_title(p.get("title",""), brand=p.get("brand",""),
                                    category=p.get("category",""), features=p.get("features",[]),
                                    condition=p.get("condition",""))
@@ -1119,7 +1128,7 @@ def _tab_editor():
                     unsafe_allow_html=True)
         ctg, ctgb = st.columns([6, 1])
         with ctgb:
-            if st.button("✨", use_container_width=True, key="btn_tags", help="Generate tags"):
+            if st.button("✨ Tags", use_container_width=True, key="btn_tags", help="Regenerate tags"):
                 r = generate_tags(p.get("title",""), p.get("description",""), p.get("category",""))
                 if r["success"]: p["tags"] = r["tags"]; st.rerun()
         with ctg:

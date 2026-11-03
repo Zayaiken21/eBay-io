@@ -903,3 +903,48 @@ hr { border-color: var(--border-soft) !important; }
   width: auto !important;
   min-width: max-content !important;
 }
+
+/* --------------------------------------------------------------------------
+   Editor toolbar.
+   The global 640px rule stacks columns, so Back / Rewrite / Save each took a
+   full-width row and sat flush on top of each other. Keep them inline,
+   right-aligned, with real gaps and a divider under the group.
+   -------------------------------------------------------------------------- */
+.st-key-editor_toolbar [data-testid="stHorizontalBlock"] {
+  flex-wrap: nowrap !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+
+.st-key-editor_toolbar [data-testid="stColumn"] {
+  flex: 0 1 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+}
+
+.st-key-editor_toolbar .stButton > button {
+  min-height: 36px !important;
+  height: 36px !important;
+  padding: 0 14px !important;
+  font-size: 12.5px !important;
+  white-space: nowrap !important;
+}
+
+/* The draft title gets its own line instead of competing with the buttons. */
+.editor-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.35;
+  margin: 2px 0 10px;
+  overflow-wrap: anywhere;
+}
+
+/* Inline action buttons beside a field (Title, Tags) keep their label on one
+   line rather than wrapping to two. */
+.stButton > button p {
+  white-space: nowrap;
+}
