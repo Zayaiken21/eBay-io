@@ -1018,3 +1018,19 @@ hr { border-color: var(--border-soft) !important; }
 .st-key-prod_tab_row [data-testid="stHorizontalBlock"]::-webkit-scrollbar {
   display: none;
 }
+
+/* Fit all five tab pills across a phone. They scroll if they must, but at
+   this padding the full set lands inside a 390px viewport, so "My Store"
+   is not left hanging off the edge. */
+@media screen and (max-width: 480px) {
+  .st-key-prod_tab_row [data-testid="stHorizontalBlock"] {
+    gap: 5px !important;
+  }
+
+  .st-key-prod_tab_row .stButton > button {
+    padding: 0 9px !important;
+    font-size: 11.5px !important;
+    height: 32px !important;
+    min-height: 32px !important;
+  }
+}

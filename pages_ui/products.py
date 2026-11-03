@@ -246,7 +246,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r29 · 2026-11-02"
+APP_BUILD = "r30 · 2026-11-02"
 
 
 def _account_banner():
@@ -960,20 +960,22 @@ def _checklist(p: dict) -> list:
     ]
 
 
-def _sync_editor_widgets(p: dict) -> None:
+def _sync_editor_widgets(p: dict = None) -> None:
     """
-    Push programmatic edits into the widgets that display them.
+    Let the editor fields pick up a programmatic rewrite.
 
-    A Streamlit widget with a key owns its value: once key "ed_title" exists
-    in session_state, the value= argument is ignored on every later run. So
-    rewriting p["title"] changed the draft but the box kept showing the old
-    text, which made the rewrite buttons look dead. Writing the widget keys
-    before the rerun is what makes the new text visible.
+    A Streamlit widget with a key owns its value: once "ed_title" exists in
+    session_state the value= argument is ignored, so rewriting p["title"]
+    changed the draft while the box kept showing the old text.
+
+    Assigning to those keys is NOT the fix — Streamlit raises
+    StreamlitAPIException if a widget key is set after that widget has been
+    created in the same run, and these buttons sit below their fields. The
+    keys are deleted instead, which is permitted; each widget then rebuilds
+    from value= on the rerun that follows.
     """
-    st.session_state["ed_title"] = p.get("title", "")
-    st.session_state["ed_desc"] = p.get("description", "")
-    st.session_state["ed_tags"] = ", ".join(p.get("tags", []) or [])
-    st.session_state["ed_feats"] = "\n".join(p.get("features", []) or [])
+    for key in ("ed_title", "ed_desc", "ed_tags", "ed_feats"):
+        st.session_state.pop(key, None)
 
 
 def _tab_editor():
