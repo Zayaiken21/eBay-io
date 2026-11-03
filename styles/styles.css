@@ -989,29 +989,30 @@ hr { border-color: var(--border-soft) !important; }
    column to grow to its content, and keeping the label from being squeezed,
    stops the collision.
    -------------------------------------------------------------------------- */
+/* Equal share per tab, and the pill fills its column so neighbours cannot
+   overlap regardless of label length. */
 .st-key-prod_tab_row [data-testid="stColumn"] {
-  min-width: max-content !important;
-  flex: 0 0 auto !important;
+  flex: 1 1 0 !important;
   width: auto !important;
+  min-width: 0 !important;
 }
 
 .st-key-prod_tab_row .stButton,
 .st-key-prod_tab_row .stButton > button {
-  width: max-content !important;
-  min-width: max-content !important;
+  width: 100% !important;
+  min-width: 0 !important;
   max-width: none !important;
 }
 
 .st-key-prod_tab_row .stButton > button p {
-  overflow: visible !important;
-  text-overflow: clip !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
 }
 
 /* Scroll the row rather than let pills collide when space runs out. */
 .st-key-prod_tab_row [data-testid="stHorizontalBlock"] {
-  overflow-x: auto !important;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+  overflow-x: visible !important;
   padding-bottom: 2px;
 }
 

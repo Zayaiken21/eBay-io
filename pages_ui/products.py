@@ -246,7 +246,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r30 · 2026-11-02"
+APP_BUILD = "r31 · 2026-11-02"
 
 
 def _account_banner():
@@ -281,12 +281,12 @@ def _tabs(draft_count: int):
     # turned five tabs into five full-width rows filling the viewport.
     labels = ["Import", f"Drafts ({draft_count})", "Editor", "Publish", "My Store"]
 
-    # Width each column by its own label. Fixed ratios gave "Drafts (0)" less
-    # room than its text needed, so the pill overflowed its column and the
-    # next pill painted over it. Proportional widths keep every label inside
-    # its own pill.
+    # Equal columns, with CSS stretching each pill to fill its share. Equal
+    # ratios alone were not enough before: a pill sized to its text
+    # overflowed a too-narrow column and the next one painted over it, so
+    # the stylesheet makes the buttons fill the column instead.
     row = st.container(key="prod_tab_row")
-    cols = row.columns([max(5, len(t) + 3) for t in labels])
+    cols = row.columns(len(labels))
     for col, key, label in zip(
         cols,
         ["import", "drafts", "editor", "publish", "store"],
@@ -1047,7 +1047,13 @@ def _tab_editor():
         with ctb:
             if st.button("✨ Title", use_container_width=True, help="Rewrite the title"):
                 st.session_state["_seo_variant"] = st.session_state.get("_seo_variant", 0) + 1
-                r = rewrite_title(p.get("title",""), brand=p.get("brand",""),
+                # Rewrite from the untouched supplier title. Feeding the
+                # already-rewritten title back in made each click append to
+                # the last result, so repeated presses degraded the title
+                # instead of producing a fresh one.
+                p.setdefault("_source_title", p.get("title", ""))
+                r = rewrite_title(p.get("_source_title") or p.get("title",""),
+                                   brand=p.get("brand",""),
                                    category=p.get("category",""), features=p.get("features",[]),
                                    condition=p.get("condition",""),
                                    variant=st.session_state["_seo_variant"])

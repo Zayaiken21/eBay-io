@@ -143,17 +143,11 @@ def rewrite_title(original_title: str, brand: str = "", category: str = "",
             title = candidate
             lowered_title = title.lower()
 
-    # Inject distinctive feature words (skip generic/short words).
-    if len(title) < 70 and features:
-        feat_words = [w for f in features[:3] for w in f.split()
-                      if len(w) > 4 and w.lower() not in lowered_title]
-        for w in feat_words:
-            candidate = f"{title} {w}"
-            if len(candidate) <= 80:
-                title = candidate
-                lowered_title = title.lower()
-            else:
-                break
+    # Previously this appended isolated words lifted out of feature
+    # sentences, which produced titles like "Organo Republic non-GMO
+    # heirloom cold-season varieties, depending choose Sorted" — fragments
+    # that read as damage rather than search terms. Keyword expansion is
+    # handled above, where only whole supported phrases are added.
 
     # Condition signal at the end if it adds real search value and there's room.
     # Only append a condition that carries real search value. A bare "New"
@@ -308,7 +302,9 @@ def auto_seo_optimize(product: dict, variant: int = 0) -> dict:
     updated = dict(product)
 
     title_result = rewrite_title(
-        product.get("title", ""),
+        # Same reason as the editor button: rebuild from the original so
+        # repeated optimisation does not compound on its own output.
+        product.get("_source_title") or product.get("title", ""),
         brand=product.get("brand", ""),
         category=product.get("category", ""),
         features=product.get("features", []),
