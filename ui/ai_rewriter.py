@@ -112,14 +112,27 @@ def rewrite_title(original_title: str, brand: str = "", category: str = "",
     # over single words, and only as many as fit in the budget.
     _, cat_kws = _match_category(f"{category} {title}")
     lowered_title = title.lower()
+
+    # Only add a keyword the product's own copy supports. Injecting every
+    # category term put claims in the title that nothing on the source page
+    # backed — a seed packet was being listed as "Heavy Duty". A listing
+    # title is a representation to a buyer, so it states only what the
+    # product's own description and features already say.
+    evidence = " ".join([
+        str(category or ""),
+        str(original_title or ""),
+        " ".join(str(f) for f in (features or [])),
+    ]).lower()
+
     for kw in sorted(cat_kws, key=len, reverse=True):
         if len(title) >= 75:
             break
-        if kw not in lowered_title:
-            candidate = f"{title} {kw.title()}"
-            if len(candidate) <= 80:
-                title = candidate
-                lowered_title = title.lower()
+        if kw in lowered_title or kw not in evidence:
+            continue
+        candidate = f"{title} {kw.title()}"
+        if len(candidate) <= 80:
+            title = candidate
+            lowered_title = title.lower()
 
     # Inject distinctive feature words (skip generic/short words).
     if len(title) < 70 and features:
@@ -134,7 +147,12 @@ def rewrite_title(original_title: str, brand: str = "", category: str = "",
                 break
 
     # Condition signal at the end if it adds real search value and there's room.
+    # Only append a condition that carries real search value. A bare "New"
+    # tells a buyer nothing eBay's own condition field does not already show,
+    # and it read as a typo glued to the end of the title.
     cond_tag = CONDITION_BOOSTERS.get((condition or "").lower(), "")
+    if cond_tag in ("New", "Used", ""):
+        cond_tag = ""
     if cond_tag and cond_tag.lower() not in lowered_title and len(title) + len(cond_tag) + 1 <= 80:
         title = f"{title} {cond_tag}"
 
@@ -160,7 +178,12 @@ def rewrite_description(
     """
     features = [f.strip() for f in (features or []) if f.strip()]
     specifications = specifications or {}
-    desc_clean = _clean(original_description)
+
+    # Strip any previously generated output before rebuilding. Re-optimising a
+    # draft fed the last result back in as the "original" description, so the
+    # whole KEY BENEFITS / SPECIFICATIONS / BUY WITH CONFIDENCE structure was
+    # re-embedded inside itself and the text doubled on every pass.
+    desc_clean = _clean(_strip_generated(original_description))
 
     cat_key, ckw = _match_category(f"{category} {title}")
 
@@ -173,7 +196,11 @@ def rewrite_description(
             feat_bullets.append(f"✔ {kw.title()} — built for everyday reliability")
 
     spec_lines = [f"• {k}: {v}" for k, v in list(specifications.items())[:15]]
-    body = _body_para(desc_clean, hook)
+
+    # Only carry over source prose that is not already covered by a bullet.
+    # The old _body_para dumped whatever followed the hook, which repeated
+    # every feature the bullets had just listed.
+    body = _residual_prose(desc_clean, hook, features)
     box_items = _guess_box_contents(title, features, specifications)
 
     sections = [hook] if hook else []
@@ -320,6 +347,71 @@ def _benefit_frame(feature: str) -> str:
     Kept conservative — never invents claims not implied by the feature text.
     """
     return feature
+
+
+# Headings this module emits. Used to recognise — and remove — its own
+# previous output so a rebuild replaces it instead of nesting inside it.
+_GENERATED_HEADINGS = [
+    "✅ KEY BENEFITS", "KEY BENEFITS",
+    "📋 SPECIFICATIONS", "SPECIFICATIONS",
+    "📦 WHAT'S IN THE BOX", "WHAT'S IN THE BOX",
+    "🛒 BUY WITH CONFIDENCE", "BUY WITH CONFIDENCE",
+    "🚚 SHIPPING & HANDLING", "SHIPPING & HANDLING",
+]
+
+
+def _strip_generated(text: str) -> str:
+    """
+    Removes previously generated sections, returning only original source
+    prose. Everything from the first generated heading onward is ours, so a
+    rebuild starts from the seller's actual product copy each time.
+    """
+    text = str(text or "")
+    if not text.strip():
+        return ""
+    cut = len(text)
+    for heading in _GENERATED_HEADINGS:
+        idx = text.find(heading)
+        if idx != -1:
+            cut = min(cut, idx)
+    cleaned = text[:cut].strip()
+    # Drop our own bullet glyphs if any survived ahead of the first heading.
+    cleaned = re.sub(r"^[✔✓•]\s*", "", cleaned, flags=re.M)
+    return cleaned.strip()
+
+
+def _residual_prose(desc: str, hook: str, features: list) -> str:
+    """
+    Source sentences not already represented in the hook or the bullets.
+
+    Prevents the body paragraph from restating the feature list, which is
+    what made descriptions balloon with near-identical text.
+    """
+    if not desc:
+        return ""
+
+    covered = _title_token_set(hook) | _title_token_set(" ".join(features or []))
+    keep = []
+    for sentence in re.split(r"(?<=[.!?])\s+", desc):
+        s = sentence.strip()
+        if len(s) < 30:
+            continue
+        tokens = _title_token_set(s)
+        if not tokens:
+            continue
+        # Mostly-seen sentences are duplicates of a bullet in prose form.
+        overlap = len(tokens & covered) / len(tokens)
+        if overlap < 0.6:
+            keep.append(s)
+            covered |= tokens
+
+    out = " ".join(keep)
+    return (out[:900].rsplit(" ", 1)[0] + "…") if len(out) > 900 else out
+
+
+def _title_token_set(text: str) -> set:
+    words = re.findall(r"[a-z0-9]+", str(text).lower())
+    return {w for w in words if len(w) > 3}
 
 
 def _body_para(desc: str, hook: str) -> str:
