@@ -21,6 +21,7 @@ import streamlit.components.v1 as components
 
 from ui.scraper         import fetch_product_page, parse_product_html
 from ui.ai_rewriter     import rewrite_title, rewrite_description, generate_tags, auto_seo_optimize
+from ui import listing_audit
 from ui.ebay_formatter  import generate_ebay_html, generate_ebay_export
 from ui.ebay_uploader   import upload_to_ebay, get_seller_policies, get_account_info, suggest_categories
 from ui.ebay_listings   import fetch_my_listings, fetch_inventory_item, delete_ebay_listing
@@ -246,7 +247,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r34 · 2026-11-02"
+APP_BUILD = "r35 · 2026-11-02"
 
 
 def _account_banner():
@@ -933,17 +934,117 @@ def _open_editor_from_ebay(sku: str, listing_id: str = ""):
 
 
 def _seo_score(p: dict) -> int:
-    tl = len(p.get("title",""))
-    return min(100, sum([
-        20 if 30 <= tl <= 80 else (10 if tl > 0 else 0),
-        10 if p.get("price") else 0,
-        20 if len(p.get("description","")) > 200 else (10 if len(p.get("description","")) > 50 else 0),
-        15 if len(p.get("images",[])) >= 3 else (8 if p.get("images") else 0),
-        10 if len(p.get("features",[])) >= 3 else (5 if p.get("features") else 0),
-        10 if p.get("specifications") else 0,
-        10 if len(p.get("tags",[])) >= 5 else (5 if p.get("tags") else 0),
-        5  if p.get("brand") else 0,
-    ]))
+    """
+    Kept as a thin wrapper so existing call sites still work. The real
+    scoring lives in ui.listing_audit, which weighs the things eBay search
+    actually uses and returns the fixes alongside the number — a bare score
+    tells a seller nothing about what to do next.
+    """
+    return listing_audit.audit(p)["score"]
+
+_SEV_STYLE = {
+    "critical": ("#fc8181", "Critical"),
+    "high":     ("#ed8936", "High"),
+    "medium":   ("#ecc94b", "Medium"),
+    "low":      ("#90cdf4", "Low"),
+}
+
+
+def _render_audit(report: dict, p: dict) -> None:
+    """
+    The fix list, worst first, plus measured keyword tools.
+
+    Collapsed by default: the score line above is the at-a-glance read, and
+    this is what a seller opens when they want to act on it.
+    """
+    counts = report["counts"]
+    summary = " · ".join(
+        f"{counts[s]} {_SEV_STYLE[s][1].lower()}"
+        for s in ("critical", "high", "medium", "low") if counts[s]
+    ) or "nothing outstanding"
+
+    with st.expander(f"🔎 Listing audit — {summary}", expanded=False):
+        cols = st.columns(len(report["breakdown"]))
+        for col, (area, b) in zip(cols, report["breakdown"].items()):
+            pct = b["points"] / b["max"] if b["max"] else 0
+            tone = "#48bb78" if pct >= 0.9 else "#ed8936" if pct >= 0.5 else "#fc8181"
+            col.markdown(
+                f'<div class="audit-tile"><span class="audit-tile-area">{area.title()}</span>'
+                f'<span class="audit-tile-pts" style="color:{tone};">'
+                f'{b["points"]:g}<span class="audit-tile-max">/{b["max"]}</span></span></div>',
+                unsafe_allow_html=True,
+            )
+
+        if not report["findings"]:
+            st.success("Every signal eBay looks at is filled in.")
+        else:
+            st.markdown('<div class="audit-list">', unsafe_allow_html=True)
+            for f in report["findings"]:
+                tone, sev = _SEV_STYLE.get(f["severity"], ("#a0aec0", "Note"))
+                st.markdown(
+                    f'<div class="audit-item">'
+                    f'<span class="audit-sev" style="background:{tone};">{sev}</span>'
+                    f'<div class="audit-body"><strong>{f["message"]}</strong>'
+                    f'<span class="audit-fix">{f["fix"]}</span></div></div>',
+                    unsafe_allow_html=True,
+                )
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        st.divider()
+        st.markdown(
+            "**Measured keywords** — reads the listings eBay is ranking right "
+            "now for this item's head term, and reports the words they share. "
+            "Only words this item's own description already supports are "
+            "offered, so nothing untrue reaches the title."
+        )
+        if st.button("📊 Measure against live eBay results",
+                     key=f"kw_measure_{p.get('draft_id','new')}"):
+            with st.spinner("Reading current eBay results…"):
+                try:
+                    from ui import keyword_demand
+
+                    gap = keyword_demand.term_gap(p.get("title", ""))
+                    supported = keyword_demand.supported_gap_terms(
+                        p.get("title", ""), p)
+                    st.session_state["_kw_gap"] = gap
+                    st.session_state["_kw_supported"] = supported
+                except Exception as exc:
+                    st.session_state["_kw_gap"] = {"error": str(exc)}
+
+        gap = st.session_state.get("_kw_gap")
+        if isinstance(gap, dict) and gap.get("error"):
+            st.warning(
+                "Could not reach eBay's Browse API — check the eBay keys in "
+                f"Settings. ({gap['error']})"
+            )
+        elif isinstance(gap, dict) and gap.get("sampled"):
+            supported = st.session_state.get("_kw_supported") or []
+            st.caption(
+                f"Sampled {gap['sampled']} live listings for “{gap['query']}”."
+            )
+            if gap.get("missing"):
+                st.markdown("**Common in top listings, missing from yours:**")
+                st.markdown("  \n".join(
+                    f"• `{r['term']}` — in {int(r['share'] * 100)}% of them"
+                    + ("  ✅ your copy supports this" if r["term"] in supported else "")
+                    for r in gap["missing"]
+                ))
+            if supported:
+                st.success(
+                    f"{len(supported)} supported term(s) will be used by the "
+                    "next title rewrite."
+                )
+                p["_gap_terms"] = supported
+                st.session_state.edit_product = p
+            else:
+                st.info(
+                    "None of the missing terms appear in this item's own "
+                    "copy, so none are safe to add. Fill in more "
+                    "Specifications and measure again."
+                )
+        elif isinstance(gap, dict):
+            st.caption("No live results came back for that term.")
+
 
 def _checklist(p: dict) -> list:
     tl = len(p.get("title",""))
@@ -1032,16 +1133,18 @@ def _tab_editor():
         if st.button("💾 Save", use_container_width=True, help="Save draft"):
             save_draft(p, did); st.toast("Saved!", icon="✅")
 
-    score = _seo_score(p)
-    color = "#48bb78" if score >= 70 else "#ed8936" if score >= 40 else "#fc8181"
-    label = "Excellent" if score >= 85 else "Good" if score >= 70 else "Fair" if score >= 40 else "Needs Work"
+    report = listing_audit.audit(p)
+    score, grade = report["score"], report["grade"]
+    color = "#48bb78" if score >= 75 else "#ed8936" if score >= 50 else "#fc8181"
     st.markdown(f"""
 <div class="seo-row">
-<span class="seo-lbl-txt">SEO Score</span>
+<span class="seo-lbl-txt">Listing Score</span>
 <div class="seo-track"><div class="seo-fill" style="width:{score}%;background:{color};"></div></div>
 <span class="seo-label" style="color:{color};">{score}/100</span>
-<span style="font-size:12px;color:#718096;">{label}</span>
+<span style="font-size:12px;color:#718096;">{grade}</span>
 </div>""", unsafe_allow_html=True)
+
+    _render_audit(report, p)
 
     col_l, col_r = st.columns([3, 2])
 

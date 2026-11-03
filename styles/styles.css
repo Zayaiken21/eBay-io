@@ -1041,3 +1041,43 @@ hr { border-color: var(--border-soft) !important; }
     min-height: 32px !important;
   }
 }
+
+/* ── Listing audit (Editor) ─────────────────────────────────────────────── */
+/* Score tiles per area, then the severity-ranked fix list. Flat surfaces and
+   a single accent per row — the panel is read while working, so it stays
+   quiet next to the editor fields rather than competing with them. */
+
+.audit-tile{
+  display:flex; flex-direction:column; gap:2px;
+  padding:10px 12px; border:1px solid var(--border);
+  border-radius:var(--r-md); background:var(--bg-sunken);
+}
+.audit-tile-area{
+  font-size:11px; font-weight:600; letter-spacing:.04em;
+  text-transform:uppercase; color:var(--muted);
+}
+.audit-tile-pts{ font-size:19px; font-weight:700; line-height:1.1; }
+.audit-tile-max{ font-size:12px; font-weight:500; color:var(--muted); }
+
+.audit-list{ margin-top:14px; display:flex; flex-direction:column; gap:8px; }
+.audit-item{
+  display:flex; gap:10px; align-items:flex-start;
+  padding:10px 12px; border:1px solid var(--border);
+  border-radius:var(--r-md); background:var(--bg-card);
+}
+.audit-sev{
+  flex:0 0 auto; min-width:60px; text-align:center;
+  padding:3px 8px; border-radius:var(--r-sm);
+  font-size:10px; font-weight:700; letter-spacing:.05em;
+  text-transform:uppercase; color:#0b1220;
+}
+.audit-body{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+.audit-body strong{ font-size:13.5px; color:var(--text); font-weight:600; }
+.audit-fix{ font-size:12.5px; line-height:1.5; color:var(--muted); }
+
+@media (max-width:640px){
+  .audit-item{ flex-direction:column; gap:6px; }
+  .audit-sev{ align-self:flex-start; }
+  .audit-tile-pts{ font-size:16px; }
+  .audit-tile{ padding:8px 10px; }
+}

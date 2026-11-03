@@ -89,7 +89,7 @@ def _match_category(text: str) -> tuple[str, list]:
 
 def rewrite_title(original_title: str, brand: str = "", category: str = "",
                    features: list = None, condition: str = "",
-                   variant: int = 0) -> dict:
+                   variant: int = 0, extra_keywords: list = None) -> dict:
     """
     Builds a high-converting eBay title using the same structure top sellers
     use: Brand + Product Name + Key Differentiator(s) + Condition signal,
@@ -127,8 +127,16 @@ def rewrite_title(original_title: str, brand: str = "", category: str = "",
         " ".join(str(f) for f in (features or [])),
     ]).lower()
 
-    supported = [k for k in sorted(cat_kws, key=len, reverse=True)
-                 if k in evidence]
+    # Measured terms first. extra_keywords comes from keyword_demand, which
+    # reads them off the listings eBay is currently ranking and has already
+    # checked each one against this product's own copy — so they beat the
+    # hand-written CATEGORY_KEYWORDS guesses, which is why they go at the
+    # front of the budget.
+    candidates = list(dict.fromkeys(
+        [str(k).strip().lower() for k in (extra_keywords or []) if str(k).strip()]
+        + sorted(cat_kws, key=len, reverse=True)
+    ))
+    supported = [k for k in candidates if k in evidence]
     # Rotate the starting point so successive clicks surface a different
     # supported keyword first instead of rebuilding the identical title.
     if supported and variant:
@@ -153,7 +161,7 @@ def rewrite_title(original_title: str, brand: str = "", category: str = "",
             break
         if kw in lowered_title:
             continue
-        candidate = f"{title} {kw.title()}"
+        candidate = f"{title} {seo_engine.smart_title_case(kw)}"
         if len(candidate) <= 80:
             title = candidate
             lowered_title = title.lower()
@@ -321,6 +329,7 @@ def auto_seo_optimize(product: dict, variant: int = 0) -> dict:
         features=product.get("features", []),
         condition=product.get("condition", ""),
         variant=variant,
+        extra_keywords=product.get("_gap_terms") or [],
     )
     if title_result["success"]:
         updated["title"] = title_result["title"]

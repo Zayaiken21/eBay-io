@@ -220,6 +220,42 @@ def closer(variant: int) -> str:
     return _pick(CLOSERS, variant, "closer")
 
 
+# Acronyms and unit markers that Python's str.title() ruins. It capitalises
+# the first letter of each alphabetic run and lowercases the rest, so
+# "non-gmo" became "Non-Gmo" and "usb-c" became "Usb-C" in live titles.
+_ACRONYMS = {
+    "gmo", "usb", "usb-c", "hdmi", "led", "lcd", "oled", "uv", "ip", "ac",
+    "dc", "tv", "pc", "ps5", "ps4", "xbox", "suv", "atv", "rv", "cpu", "gpu",
+    "ssd", "hdd", "ram", "rgb", "nfc", "gps", "rfid", "oem", "mpn", "upc",
+    "ean", "sku", "bpa", "spf", "uhd", "hd", "4k", "8k", "3d", "ml", "mm",
+    "cm", "kg", "lb", "oz", "ft", "in", "psi", "btu", "mah", "ghz", "mhz",
+    "wifi", "bt", "abs", "pvc", "pu", "xl", "xxl", "xs", "sm", "md", "lg",
+}
+
+
+def smart_title_case(text: str) -> str:
+    """
+    Title-case for product terms, respecting acronyms and hyphens.
+
+    str.title() is wrong for the vocabulary listings use: it produced
+    "Non-Gmo", "Usb-C" and "4K" → "4K" only by luck. Each hyphen-separated
+    part is cased on its own so compounds survive.
+    """
+    def case_part(part: str) -> str:
+        low = part.lower()
+        if low in _ACRONYMS:
+            return low.upper()
+        # A short run with a digit is a model or size code — leave its shape.
+        if any(c.isdigit() for c in low):
+            return part.upper() if len(low) <= 4 else part
+        return low[:1].upper() + low[1:] if low else part
+
+    words = []
+    for word in str(text or "").split():
+        words.append("-".join(case_part(p) for p in word.split("-")))
+    return " ".join(words)
+
+
 # ── Title phrasing ───────────────────────────────────────────────────────────
 # Orderings only. No term is introduced that the product's own copy does not
 # already support — the caller filters for that before passing them in.
@@ -254,7 +290,7 @@ def title_variants(brand: str, core: str, extras: list, variant: int,
     for n in range(len(extras), -1, -1):
         candidate = shape.format(
             brand=brand, core=core,
-            extras=" ".join(e.title() for e in extras[:n]),
+            extras=" ".join(smart_title_case(e) for e in extras[:n]),
         )
         candidate = re.sub(r"\s{2,}", " ", candidate).strip(" -")
         if len(candidate) <= limit:
