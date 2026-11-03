@@ -555,15 +555,43 @@ def _body_para(desc: str, hook: str) -> str:
 
 
 def _guess_box_contents(title: str, features: list, specs: dict) -> list:
-    items = [f"1x {title}"]
-    feat_text = " ".join(features).lower()
-    spec_text = " ".join(f"{k} {v}" for k,v in specs.items()).lower()
-    combined  = feat_text + " " + spec_text
-    if "cable" in combined or "usb" in combined:     items.append("1x USB Cable")
-    if "adapter" in combined:                         items.append("1x Power Adapter")
-    if "remote" in combined:                          items.append("1x Remote Control")
-    if "manual" in combined or "instruction" in combined: items.append("1x User Manual")
-    if "battery" in combined and "include" in combined:   items.append("Batteries (Included)")
-    if "case" in combined or "pouch" in combined:    items.append("1x Carrying Case/Pouch")
-    if "screw" in combined or "mount" in combined:   items.append("Mounting Hardware")
-    return items[:5]
+    """
+    What the source actually says is included.
+
+    This previously inferred contents from bare keyword hits: the word "usb"
+    anywhere in the copy added "1x USB Cable" to the listing, "mount" added
+    "Mounting Hardware". That states to a buyer what is in the box, so a
+    wrong guess is an item-not-as-described case. It now reports only
+    inclusions the source text states outright.
+    """
+    blob = " ".join([str(f) for f in (features or [])]
+                    + [f"{k}: {v}" for k, v in (specs or {}).items()])
+
+    items = []
+    # "Includes / comes with / in the box: a, b and c"
+    for phrase in re.findall(
+        r"(?:includes?|included|comes with|in the box|set of|bundled with)\s*:?\s*"
+        r"([^.;\n]{4,120})", blob, re.I,
+    ):
+        for part in re.split(r",| and |&|\+", phrase):
+            part = part.strip(" .:-—")
+            # Drop leading counts/articles so entries read consistently.
+            part = re.sub(r"^(?:a|an|the|one|1)\s+", "", part, flags=re.I).strip()
+            if 2 < len(part) < 60 and part.lower() not in [i.lower() for i in items]:
+                items.append(part[:60])
+
+    # Explicit "2x widger" style counts stated in the copy.
+    for count, thing in re.findall(r"\b(\d{1,2})\s*[x×]\s*([A-Za-z][\w \-]{2,40})", blob):
+        entry = f"{count}x {thing.strip()}"
+        if entry.lower() not in [i.lower() for i in items]:
+            items.append(entry)
+
+    if not items:
+        return []
+
+    # The product itself leads the list, but only when there is something
+    # else to list alongside it.
+    main = re.sub(r"\s*[,|].*$", "", str(title or "")).strip()
+    if main:
+        items.insert(0, f"1x {main[:60]}")
+    return items[:6]

@@ -777,11 +777,58 @@ def _product_from_shopify_json(sp: dict, url: str, domain: str) -> dict:
     variant_labels = [o.get("name", "") for o in options if isinstance(o, dict) and o.get("name")]
     variant_options, variant_rows = _shopify_variants(sp, images)
 
+    # eBay item specifics, not a dump of store metadata. These become the
+    # aspects on the listing, and a category's required aspects are what
+    # publish rejects a listing for, so capture everything the payload has.
     specs = {}
-    if sp.get("product_type"):
-        specs["Product Type"] = sp["product_type"]
+
+    def _put(key, value):
+        value = str(value or "").strip()
+        if value and key not in specs:
+            specs[key] = value[:65]
+
+    _put("Brand", sp.get("vendor"))
+    _put("Type", sp.get("product_type"))
+    _put("MPN", (chosen or {}).get("sku") if chosen else "")
+
+    # Shopify stores the barcode per variant; it is the UPC/EAN eBay wants.
+    barcode = str((chosen or {}).get("barcode") or "").strip()
+    if barcode.isdigit():
+        _put({12: "UPC", 13: "EAN", 14: "GTIN"}.get(len(barcode), "GTIN"), barcode)
+
+    # Each option axis is a genuine item specific: Size, Color, Material…
+    for opt in variant_options:
+        name = str(opt.get("name") or "").strip()
+        if not name or name.lower() in ("title", "default title"):
+            continue
+        chosen_val = (chosen or {}).get("options", {}).get(name) if chosen else None
+        _put(name, chosen_val or ", ".join(opt.get("values", [])[:4]))
+
+    # `chosen` is the raw Shopify variant, which carries grams rather than a
+    # formatted weight; reading .weight here silently found nothing.
+    if chosen and chosen.get("grams"):
+        grams = float(chosen["grams"])
+        _put("Item Weight", f"{grams / 453.592:.2f} lb" if grams >= 454
+             else f"{grams / 28.3495:.1f} oz")
+
+    # "Material: Stainless Steel" lines inside the body copy are specs the
+    # merchant wrote out in prose; the old code ignored them entirely.
+    body_text = _clean_html(sp.get("body_html", ""))
+    # Stop each value at the next "Label:" rather than at double spaces —
+    # _clean_html collapses whitespace, so the old lookahead never fired and
+    # one value swallowed the following label ("USA Shelf Life: 3 years").
+    for key, val in re.findall(
+        r"([A-Z][A-Za-z /&-]{2,28}):\s*(.+?)"
+        r"(?=\s+[A-Z][A-Za-z /&-]{2,28}:|[•|\n]|$)",
+        body_text,
+    ):
+        key = key.strip()
+        if key.lower() not in ("note", "notes", "warning", "shipping", "returns"):
+            _put(key, val)
+
     if sp.get("tags"):
-        specs["Tags"] = ", ".join(sp["tags"][:10]) if isinstance(sp["tags"], list) else str(sp["tags"])
+        tags = sp["tags"] if isinstance(sp["tags"], list) else [str(sp["tags"])]
+        _put("Features", ", ".join(str(t) for t in tags[:6]))
 
     return {
         "domain": domain, "source_url": url, "status": "draft",
@@ -882,6 +929,21 @@ def _extract_all(soup, html: str, url: str, domain: str, rules: dict, island_fie
     p["description"]   = _description(soup, html, domain, rules) or _island_str(island_fields, ["description", "body_html", "descriptionHtml"])
     p["features"]      = _features(soup, html, rules)
     p["specifications"]= _specifications(soup, html, domain, rules)
+
+    # eBay identifiers from JSON-LD. Without these a listing is missing the
+    # aspects most categories require, which is what publish rejects on.
+    for jld_field, aspect in (("brand", "Brand"), ("mpn", "MPN"),
+                              ("gtin12", "UPC"), ("gtin13", "EAN"),
+                              ("gtin", "GTIN"), ("color", "Color"),
+                              ("material", "Material"), ("size", "Size"),
+                              ("model", "Model")):
+        if aspect in p["specifications"]:
+            continue
+        raw = _jld(html, jld_field)
+        if isinstance(raw, dict):
+            raw = raw.get("name") or raw.get("value")
+        if raw:
+            p["specifications"][aspect] = str(raw).strip()[:65]
     p["images"]        = _images(soup, html, url, rules) or _island_images(island_fields, url)
     p["sku"]           = _sku(soup, html) or _island_str(island_fields, ["sku", "id", "productId"])
     p["weight"]        = _spec_val(p["specifications"], ["weight","item weight","net weight","shipping weight"])
