@@ -246,7 +246,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r32 · 2026-11-02"
+APP_BUILD = "r33 · 2026-11-02"
 
 
 def _account_banner():
@@ -972,11 +972,11 @@ def _sync_editor_widgets(p: dict = None) -> None:
     session_state the value= argument is ignored, so rewriting p["title"]
     changed the draft while the box kept showing the old text.
 
-    Assigning to those keys is NOT the fix — Streamlit raises
-    StreamlitAPIException if a widget key is set after that widget has been
-    created in the same run, and these buttons sit below their fields. The
-    keys are deleted instead, which is permitted; each widget then rebuilds
-    from value= on the rerun that follows.
+    Neither writing nor clearing those keys works: Streamlit raises
+    StreamlitAPIException once the widget exists in the run, and these
+    buttons sit below their fields. So the keys are versioned instead — a
+    bumped revision produces a different key, which is a new widget, which
+    initialises from value=. No existing widget's state is touched.
     """
     # Bump the revision instead of touching the widget keys. Streamlit
     # rejects both setting and clearing a widget's key once that widget has
