@@ -246,7 +246,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r28 · 2026-11-02"
+APP_BUILD = "r29 · 2026-11-02"
 
 
 def _account_banner():
@@ -279,12 +279,18 @@ def _tabs(draft_count: int):
     # Keyed so the stylesheet can keep this row inline. The global rule that
     # stacks columns on narrow screens is right for forms, but applied here it
     # turned five tabs into five full-width rows filling the viewport.
+    labels = ["Import", f"Drafts ({draft_count})", "Editor", "Publish", "My Store"]
+
+    # Width each column by its own label. Fixed ratios gave "Drafts (0)" less
+    # room than its text needed, so the pill overflowed its column and the
+    # next pill painted over it. Proportional widths keep every label inside
+    # its own pill.
     row = st.container(key="prod_tab_row")
-    c1, c2, c3, c4, c5, _ = row.columns([2, 2.6, 2, 2, 2.4, 0.4])
+    cols = row.columns([max(5, len(t) + 3) for t in labels])
     for col, key, label in zip(
-        [c1, c2, c3, c4, c5],
+        cols,
         ["import", "drafts", "editor", "publish", "store"],
-        ["Import", f"Drafts ({draft_count})", "Editor", "Publish", "My Store"],
+        labels,
     ):
         with col:
             disabled = (key == "editor" and not st.session_state.edit_product)
