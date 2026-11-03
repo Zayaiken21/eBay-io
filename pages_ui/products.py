@@ -246,7 +246,7 @@ def _hero(total_drafts: int):
 # Bump on every deploy. Rendered in the account banner so a stale process is
 # immediately visible: if the badge below does not match the latest commit,
 # the running app is not the code in the repo.
-APP_BUILD = "r31 · 2026-11-02"
+APP_BUILD = "r32 · 2026-11-02"
 
 
 def _account_banner():
@@ -281,10 +281,9 @@ def _tabs(draft_count: int):
     # turned five tabs into five full-width rows filling the viewport.
     labels = ["Import", f"Drafts ({draft_count})", "Editor", "Publish", "My Store"]
 
-    # Equal columns, with CSS stretching each pill to fill its share. Equal
-    # ratios alone were not enough before: a pill sized to its text
-    # overflowed a too-narrow column and the next one painted over it, so
-    # the stylesheet makes the buttons fill the column instead.
+    # Each pill sizes to its own label — no truncation — and the row spreads
+    # the leftover width evenly between them, so the spacing is equal without
+    # any label being cut short.
     row = st.container(key="prod_tab_row")
     cols = row.columns(len(labels))
     for col, key, label in zip(
@@ -960,6 +959,11 @@ def _checklist(p: dict) -> list:
     ]
 
 
+def _editor_rev() -> int:
+    """Revision counter folded into every editor widget key."""
+    return int(st.session_state.get("_editor_rev", 0))
+
+
 def _sync_editor_widgets(p: dict = None) -> None:
     """
     Let the editor fields pick up a programmatic rewrite.
@@ -974,8 +978,12 @@ def _sync_editor_widgets(p: dict = None) -> None:
     keys are deleted instead, which is permitted; each widget then rebuilds
     from value= on the rerun that follows.
     """
-    for key in ("ed_title", "ed_desc", "ed_tags", "ed_feats"):
-        st.session_state.pop(key, None)
+    # Bump the revision instead of touching the widget keys. Streamlit
+    # rejects both setting and clearing a widget's key once that widget has
+    # been created in the run, and these buttons sit below their fields, so
+    # either raised StreamlitAPIException. Changing the key makes Streamlit
+    # build a fresh widget, which reads value= and shows the new text.
+    st.session_state["_editor_rev"] = _editor_rev() + 1
 
 
 def _tab_editor():
@@ -1043,7 +1051,7 @@ def _tab_editor():
         ct, ctb = st.columns([6, 1])
         with ct:
             p["title"] = st.text_input("Title", value=p.get("title",""),
-                                        label_visibility="collapsed", key="ed_title")
+                                        label_visibility="collapsed", key=f"ed_title_{_editor_rev()}")
         with ctb:
             if st.button("✨ Title", use_container_width=True, help="Rewrite the title"):
                 st.session_state["_seo_variant"] = st.session_state.get("_seo_variant", 0) + 1
@@ -1153,20 +1161,20 @@ def _tab_editor():
                         st.rerun()
 
         p["description"] = st.text_area("Description", value=p.get("description",""),
-                                          height=260, label_visibility="collapsed", key="ed_desc")
+                                          height=260, label_visibility="collapsed", key=f"ed_desc_{_editor_rev()}")
         st.caption(f"{len(p.get('description',''))} characters")
 
         st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">✅</span>Key Features</div>',
                     unsafe_allow_html=True)
         feats_ed = st.text_area("Features (one per line)", value="\n".join(p.get("features",[])),
-                                 height=120, label_visibility="collapsed", key="ed_feats")
+                                 height=120, label_visibility="collapsed", key=f"ed_feats_{_editor_rev()}")
         p["features"] = [f.strip() for f in feats_ed.splitlines() if f.strip()]
 
         st.markdown('<div class="sec-hdr"><span class="sec-hdr-icon">🔧</span>Specifications</div>',
                     unsafe_allow_html=True)
         specs_raw = "\n".join(f"{k}: {v}" for k,v in (p.get("specifications") or {}).items())
         specs_ed  = st.text_area("Key: Value per line", value=specs_raw, height=120,
-                                  label_visibility="collapsed", key="ed_specs")
+                                  label_visibility="collapsed", key=f"ed_specs_{_editor_rev()}")
         new_specs = {}
         for line in specs_ed.splitlines():
             if ":" in line:
@@ -1190,7 +1198,7 @@ def _tab_editor():
                     st.rerun()
         with ctg:
             tags_ed = st.text_input("Tags (comma-separated)", value=", ".join(p.get("tags",[])),
-                                     label_visibility="collapsed", key="ed_tags")
+                                     label_visibility="collapsed", key=f"ed_tags_{_editor_rev()}")
             p["tags"] = [t.strip() for t in tags_ed.split(",") if t.strip()]
 
     with col_r:

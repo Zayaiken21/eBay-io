@@ -989,24 +989,30 @@ hr { border-color: var(--border-soft) !important; }
    column to grow to its content, and keeping the label from being squeezed,
    stops the collision.
    -------------------------------------------------------------------------- */
-/* Equal share per tab, and the pill fills its column so neighbours cannot
-   overlap regardless of label length. */
+/* Pills size to their own label, and the row distributes the leftover width
+   evenly between them. Forcing equal columns truncated the longer labels to
+   "Drafts…" and "My St…", which is worse than uneven pill widths. */
+.st-key-prod_tab_row [data-testid="stHorizontalBlock"] {
+  justify-content: space-between !important;
+}
+
 .st-key-prod_tab_row [data-testid="stColumn"] {
-  flex: 1 1 0 !important;
+  flex: 0 0 auto !important;
   width: auto !important;
-  min-width: 0 !important;
+  min-width: max-content !important;
 }
 
 .st-key-prod_tab_row .stButton,
 .st-key-prod_tab_row .stButton > button {
-  width: 100% !important;
-  min-width: 0 !important;
+  width: max-content !important;
+  min-width: max-content !important;
   max-width: none !important;
 }
 
+/* Never truncate a tab label. */
 .st-key-prod_tab_row .stButton > button p {
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
   white-space: nowrap !important;
 }
 
